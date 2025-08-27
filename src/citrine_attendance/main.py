@@ -19,6 +19,8 @@ from .services.user_service import user_service
 from .services.attendance_service import attendance_service
 # Import security utility
 from .utils.security import hash_password
+from .locale import translator
+from PyQt6.QtCore import Qt
 
 
 # --- Logging Setup ---
@@ -158,6 +160,13 @@ def main():
         if app is None:
             app = QApplication(sys.argv)
             logger.debug("Created new QApplication instance.")
+
+        # Set language and layout direction
+        translator.set_language(config.settings.get("language", "en"))
+        if config.settings.get("language") == "fa":
+            app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        else:
+            app.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
 
         # --- Create the Main Application Window ---
         # The MainWindow constructor handles login and showing itself

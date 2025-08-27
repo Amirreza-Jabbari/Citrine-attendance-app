@@ -29,6 +29,7 @@ from .views.settings_view import SettingsView
 
 # --- Import Backup Service for automatic backups ---
 from ..services.backup_service import backup_service, BackupServiceError
+from ..locale import _
 
 
 class MainWindow(QMainWindow):
@@ -44,11 +45,11 @@ class MainWindow(QMainWindow):
         self.last_backup_check_time = None # Optional: track when we last checked/scheduled
 
         # --- Initial UI Setup (Before Login) ---
-        self.setWindowTitle("Citrine Attendance")
+        self.setWindowTitle(_("app_title"))
         self.setGeometry(100, 100, 1200, 800)
 
         # Placeholder widget shown before login
-        self.placeholder_widget = QLabel("Initializing login...")
+        self.placeholder_widget = QLabel(_("status_initializing"))
         self.placeholder_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setCentralWidget(self.placeholder_widget)
         # Initially hide the main window, only show the login dialog
@@ -57,7 +58,7 @@ class MainWindow(QMainWindow):
         # Status Bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Initializing...")
+        self.status_bar.showMessage(_("status_initializing"))
 
         # Load resources
         self.load_resources()
@@ -189,7 +190,7 @@ class MainWindow(QMainWindow):
 
         # Set Dashboard as the initial view
         self.switch_view(0)
-        self.status_bar.showMessage("Ready")
+        self.status_bar.showMessage(_("status_ready"))
         self.logger.debug("Main UI components initialized.")
 
     def create_sidebar(self):
@@ -223,17 +224,17 @@ class MainWindow(QMainWindow):
         """)
 
         # --- Navigation Buttons ---
-        self.btn_dashboard = QPushButton("Dashboard")
+        self.btn_dashboard = QPushButton(_("view_dashboard"))
         self.btn_dashboard.setObjectName("btnDashboard")
         self.btn_dashboard.clicked.connect(lambda: self.switch_view(0))
         sidebar_layout.addWidget(self.btn_dashboard)
 
-        self.btn_employees = QPushButton("Employees")
+        self.btn_employees = QPushButton(_("view_employees"))
         self.btn_employees.setObjectName("btnEmployees")
         self.btn_employees.clicked.connect(lambda: self.switch_view(1))
         sidebar_layout.addWidget(self.btn_employees)
 
-        self.btn_attendance = QPushButton("Attendance")
+        self.btn_attendance = QPushButton(_("view_attendance"))
         self.btn_attendance.setObjectName("btnAttendance")
         self.btn_attendance.clicked.connect(lambda: self.switch_view(2))
         sidebar_layout.addWidget(self.btn_attendance)
@@ -244,27 +245,27 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(spacer)
 
         # --- Admin-specific buttons (connected) ---
-        self.btn_reports = QPushButton("Reports")
+        self.btn_reports = QPushButton(_("view_reports"))
         self.btn_reports.setObjectName("btnReports")
         self.btn_reports.clicked.connect(lambda: self.switch_view(3)) # Connected
         sidebar_layout.addWidget(self.btn_reports)
 
-        self.btn_backups = QPushButton("Backups")
+        self.btn_backups = QPushButton(_("view_backups"))
         self.btn_backups.setObjectName("btnBackups")
         self.btn_backups.clicked.connect(lambda: self.switch_view(4)) # Connected
         sidebar_layout.addWidget(self.btn_backups)
 
-        self.btn_archive = QPushButton("Archive")
+        self.btn_archive = QPushButton(_("view_archive"))
         self.btn_archive.setObjectName("btnArchive")
         self.btn_archive.clicked.connect(lambda: self.switch_view(5)) # Connected
         sidebar_layout.addWidget(self.btn_archive)
 
-        self.btn_settings = QPushButton("Settings")
+        self.btn_settings = QPushButton(_("view_settings"))
         self.btn_settings.setObjectName("btnSettings")
         self.btn_settings.clicked.connect(lambda: self.switch_view(6)) # Connected
         sidebar_layout.addWidget(self.btn_settings)
 
-        self.btn_exit = QPushButton("Exit")
+        self.btn_exit = QPushButton(_("exit"))
         self.btn_exit.setObjectName("btnExit")
         self.btn_exit.clicked.connect(self.close)
         sidebar_layout.addWidget(self.btn_exit)
@@ -405,8 +406,8 @@ class MainWindow(QMainWindow):
         # ---
         
         reply = QMessageBox.question(
-            self, 'Confirm Exit',
-            "Are you sure you want to quit?",
+            self, _("confirm_exit"),
+            _("are_you_sure_quit"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )

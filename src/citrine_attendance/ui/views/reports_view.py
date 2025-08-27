@@ -14,6 +14,7 @@ from ...services.attendance_service import attendance_service
 from ...services.employee_service import employee_service
 from ...services.export_service import export_service, ExportServiceError
 from ...database import get_db_session
+from ...locale import _
 
 
 class ReportsView(QWidget):
@@ -36,13 +37,13 @@ class ReportsView(QWidget):
 
         # --- Report Selection ---
         selection_layout = QHBoxLayout()
-        selection_layout.addWidget(QLabel("Report Type:"))
+        selection_layout.addWidget(QLabel(_("reports_report_type")))
         self.report_type_combo = QComboBox()
         # Add predefined report types
-        self.report_type_combo.addItem("--- Select a Report ---", None)
-        self.report_type_combo.addItem("Daily Summary", "daily_summary")
-        self.report_type_combo.addItem("Monthly Employee Timesheet", "monthly_timesheet")
-        self.report_type_combo.addItem("Payroll Export (CSV)", "payroll_csv")
+        self.report_type_combo.addItem(_("reports_select_report"), None)
+        self.report_type_combo.addItem(_("reports_daily_summary"), "daily_summary")
+        self.report_type_combo.addItem(_("reports_monthly_timesheet"), "monthly_timesheet")
+        self.report_type_combo.addItem(_("reports_payroll_export"), "payroll_csv")
         # Add more as needed
         selection_layout.addWidget(self.report_type_combo)
         selection_layout.addStretch()
@@ -55,7 +56,7 @@ class ReportsView(QWidget):
 
         # Date Range (common for many reports)
         date_layout = QHBoxLayout()
-        date_layout.addWidget(QLabel("Date Range:"))
+        date_layout.addWidget(QLabel(_("reports_date_range")))
         self.start_date_edit = QDateEdit()
         self.start_date_edit.setCalendarPopup(True)
         self.start_date_edit.setDate(QDate.currentDate().addDays(-30)) # Default 30 days
@@ -70,9 +71,9 @@ class ReportsView(QWidget):
 
         # Employee Selection (for employee-specific reports)
         emp_layout = QHBoxLayout()
-        emp_layout.addWidget(QLabel("Employee (Optional):"))
+        emp_layout.addWidget(QLabel(_("reports_employee_optional")))
         self.employee_combo = QComboBox()
-        self.employee_combo.addItem("All Employees", None)
+        self.employee_combo.addItem(_("reports_all_employees"), None)
         emp_layout.addWidget(self.employee_combo)
         emp_layout.addStretch()
         params_layout.addLayout(emp_layout)
@@ -86,9 +87,9 @@ class ReportsView(QWidget):
 
         # --- Action Buttons ---
         button_layout = QHBoxLayout()
-        self.generate_button = QPushButton("Generate Preview")
+        self.generate_button = QPushButton(_("reports_generate_preview"))
         self.generate_button.clicked.connect(self.generate_preview)
-        self.export_button = QPushButton("Export Report")
+        self.export_button = QPushButton(_("reports_export_report"))
         self.export_button.clicked.connect(self.export_report)
         self.export_button.setEnabled(False) # Enable after preview
         button_layout.addWidget(self.generate_button)
@@ -97,7 +98,7 @@ class ReportsView(QWidget):
         layout.addLayout(button_layout)
 
         # --- Preview Area ---
-        layout.addWidget(QLabel("Preview:"))
+        layout.addWidget(QLabel(_("reports_preview")))
         self.preview_area = QTextEdit() # Or QTableView for tabular data
         self.preview_area.setReadOnly(True)
         layout.addWidget(self.preview_area, 1) # Stretch to fill space
@@ -112,7 +113,7 @@ class ReportsView(QWidget):
             self.db_session = next(session_gen)
             employees = employee_service.get_all_employees(db=self.db_session)
             self.employee_combo.clear()
-            self.employee_combo.addItem("All Employees", None)
+            self.employee_combo.addItem(_("reports_all_employees"), None)
             for emp in employees:
                 display_name = f"{emp.first_name} {emp.last_name}".strip() or emp.email
                 self.employee_combo.addItem(display_name, emp.id)

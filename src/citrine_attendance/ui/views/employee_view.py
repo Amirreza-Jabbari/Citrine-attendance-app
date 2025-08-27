@@ -17,6 +17,7 @@ from ...services.employee_service import (
     EmployeeServiceError, EmployeeAlreadyExistsError, EmployeeNotFoundError
 )
 from ...database import Employee # Import Employee model if needed for type hints
+from ...locale import _
 
 
 class EmployeeView(QWidget):
@@ -48,24 +49,24 @@ class EmployeeView(QWidget):
         top_layout = QHBoxLayout()
         top_layout.setSpacing(15)
 
-        self.add_btn = QPushButton("Add Employee")
+        self.add_btn = QPushButton(_("employee_add"))
         self.add_btn.setStyleSheet(self.get_button_style("#11563a")) # Brand color
         self.add_btn.clicked.connect(self.open_add_employee_dialog)
         top_layout.addWidget(self.add_btn)
 
-        self.edit_btn = QPushButton("Edit Employee")
+        self.edit_btn = QPushButton(_("employee_edit"))
         self.edit_btn.setStyleSheet(self.get_button_style("#ffa500"))
         self.edit_btn.setEnabled(False)
         self.edit_btn.clicked.connect(self.open_edit_employee_dialog)
         top_layout.addWidget(self.edit_btn)
 
-        self.delete_btn = QPushButton("Delete Employee")
+        self.delete_btn = QPushButton(_("employee_delete"))
         self.delete_btn.setStyleSheet(self.get_button_style("#d32f2f")) # Red
         self.delete_btn.setEnabled(False)
         self.delete_btn.clicked.connect(self.delete_selected_employee)
         top_layout.addWidget(self.delete_btn)
 
-        self.import_btn = QPushButton("Import CSV")
+        self.import_btn = QPushButton(_("employee_import_csv"))
         self.import_btn.setStyleSheet(self.get_button_style("#4caf50")) # Green
         # self.import_btn.clicked.connect(self.import_employees_from_csv)
         top_layout.addWidget(self.import_btn)
@@ -262,9 +263,7 @@ class EmployeeView(QWidget):
         # Confirmation dialog
         reply = QMessageBox.question(
             self, 'Confirm Delete',
-            f"Are you sure you want to delete employee '{employee_to_delete.first_name} {employee_to_delete.last_name}'?\n"
-            f"Email: {employee_to_delete.email}\n"
-            f"This action cannot be undone.",
+            _("employee_confirm_delete", employee_name=f"{employee_to_delete.first_name} {employee_to_delete.last_name}", email=employee_to_delete.email),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -276,7 +275,7 @@ class EmployeeView(QWidget):
 
                 QMessageBox.information(
                     self, "Success",
-                    f"Employee '{employee_to_delete.first_name} {employee_to_delete.last_name}' deleted successfully."
+                    _("employee_deleted_success", employee_name=f"{employee_to_delete.first_name} {employee_to_delete.last_name}")
                 )
                 self.logger.info(f"Employee deleted via UI: ID {employee_to_delete.id}")
 
@@ -287,7 +286,7 @@ class EmployeeView(QWidget):
 
             except EmployeeNotFoundError:
                 self.logger.warning(f"Delete failed: Employee ID {employee_to_delete.id} not found.")
-                QMessageBox.warning(self, "Not Found", "The selected employee could not be found. It might have been deleted already.")
+                QMessageBox.warning(self, "Not Found", _("employee_not_found"))
                 # Refresh the list to reflect the actual state
                 self.load_employees()
 

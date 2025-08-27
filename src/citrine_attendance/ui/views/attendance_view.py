@@ -25,6 +25,7 @@ from ..dialogs.export_dialog import ExportDialog
 from ...services.export_service import export_service, ExportServiceError
 from ...services.attendance_service import attendance_service
 from ...services.audit_service import audit_service # <-- Import audit service
+from ...locale import _
 
 import jdatetime
 
@@ -54,11 +55,11 @@ class AttendanceView(QWidget):
         self.create_filter_bar()
         # --- Add Record & Export Buttons to Filter Bar ---
         button_layout = QHBoxLayout()
-        self.add_record_btn = QPushButton("Add Record")
+        self.add_record_btn = QPushButton(_("attendance_add_record"))
         self.add_record_btn.setStyleSheet(self.get_button_style("#11563a")) # Brand color
         self.add_record_btn.clicked.connect(self.open_add_record_dialog)
 
-        self.export_btn = QPushButton("Export")
+        self.export_btn = QPushButton(_("attendance_export"))
         self.export_btn.setStyleSheet(self.get_button_style("#4caf50")) # Green
         self.export_btn.clicked.connect(self.open_export_dialog)
 
@@ -96,7 +97,7 @@ class AttendanceView(QWidget):
         layout.addWidget(self.attendance_table)
 
         # --- Aggregation Row (Updated to remove Late and HalfDay) ---
-        self.aggregation_label = QLabel("Aggregates: Total Mins: 0, Present: 0, Absent: 0")
+        self.aggregation_label = QLabel(_("attendance_aggregates", total_minutes=0, present_days=0, absent_days=0))
         self.aggregation_label.setStyleSheet("font-weight: bold; padding: 5px;")
         self.aggregation_label.setAlignment(Qt.AlignmentFlag.AlignRight)
         layout.addWidget(self.aggregation_label)
@@ -109,7 +110,7 @@ class AttendanceView(QWidget):
         filter_layout.setSpacing(15)
 
         # Employee Filter
-        filter_layout.addWidget(QLabel("Employee:"))
+        filter_layout.addWidget(QLabel(_("attendance_filter_employee")))
         self.employee_filter_combo = QComboBox()
         self.employee_filter_combo.setMinimumWidth(150)
         self.employee_filter_combo.currentIndexChanged.connect(self.on_filter_changed)
@@ -117,12 +118,12 @@ class AttendanceView(QWidget):
 
         # --- Modified Date Range Filter Section ---
         date_range_layout = QHBoxLayout()
-        date_range_layout.addWidget(QLabel("Date Range:"))
+        date_range_layout.addWidget(QLabel(_("attendance_filter_date_range")))
 
         # Start Date
         start_layout = QVBoxLayout()
         start_layout.setSpacing(0)
-        start_layout.addWidget(QLabel("Start:")) # Label for clarity
+        start_layout.addWidget(QLabel(_("attendance_filter_start"))) # Label for clarity
         self.start_date_edit = QDateEdit()
         self.start_date_edit.setCalendarPopup(True)
         self.start_date_edit.setDate(QDate.currentDate().addDays(-30)) # Default start
@@ -140,7 +141,7 @@ class AttendanceView(QWidget):
         # End Date
         end_layout = QVBoxLayout()
         end_layout.setSpacing(0)
-        end_layout.addWidget(QLabel("End:")) # Label for clarity
+        end_layout.addWidget(QLabel(_("attendance_filter_end"))) # Label for clarity
         self.end_date_edit = QDateEdit()
         self.end_date_edit.setCalendarPopup(True)
         self.end_date_edit.setDate(QDate.currentDate()) # Default end (today)
@@ -159,8 +160,8 @@ class AttendanceView(QWidget):
         # --- End Modified Date Range Filter Section ---
 
         # --- Status Filter (Updated to remove Late and Half Day) ---
-        filter_layout.addWidget(QLabel("Status:"))
-        self.status_present_cb = QCheckBox("Present")
+        filter_layout.addWidget(QLabel(_("attendance_filter_status")))
+        self.status_present_cb = QCheckBox(_("attendance_filter_present"))
         self.status_present_cb.setChecked(True)
         self.status_present_cb.stateChanged.connect(self.on_filter_changed)
         filter_layout.addWidget(self.status_present_cb)
@@ -168,7 +169,7 @@ class AttendanceView(QWidget):
         # self.status_late_cb = QCheckBox("Late") # Removed
         # self.status_late_cb.stateChanged.connect(self.on_filter_changed) # Removed
 
-        self.status_absent_cb = QCheckBox("Absent")
+        self.status_absent_cb = QCheckBox(_("attendance_filter_absent"))
         self.status_absent_cb.setChecked(True)
         self.status_absent_cb.stateChanged.connect(self.on_filter_changed)
         filter_layout.addWidget(self.status_absent_cb)
@@ -177,15 +178,15 @@ class AttendanceView(QWidget):
         # self.status_halfday_cb.stateChanged.connect(self.on_filter_changed) # Removed
 
         # Search Filter
-        filter_layout.addWidget(QLabel("Search:"))
+        filter_layout.addWidget(QLabel(_("attendance_filter_search")))
         self.search_filter_edit = QLineEdit()
-        self.search_filter_edit.setPlaceholderText("Search notes or status...")
+        self.search_filter_edit.setPlaceholderText(_("attendance_filter_search_placeholder"))
         self.search_filter_edit.textChanged.connect(self.on_filter_changed)
         self.search_filter_edit.returnPressed.connect(self.on_filter_changed)
         filter_layout.addWidget(self.search_filter_edit)
 
         # Refresh Button
-        self.refresh_button = QPushButton("Refresh")
+        self.refresh_button = QPushButton(_("attendance_filter_refresh"))
         refresh_icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
         self.refresh_button.setIcon(refresh_icon)
         self.refresh_button.clicked.connect(self.load_attendance_data)
@@ -275,13 +276,7 @@ class AttendanceView(QWidget):
         try:
             aggregates = self.attendance_model.get_aggregates()
             # Updated aggregate text to only show Present and Absent
-            agg_text = (
-                f"Aggregates: "
-                f"Total Mins: {aggregates['total_minutes']}, "
-                f"Present: {aggregates['present_days']}, "
-                f"Absent: {aggregates['absent_days']}"
-                # Late and Half Day removed
-            )
+            agg_text = _("attendance_aggregates", total_minutes=aggregates['total_minutes'], present_days=aggregates['present_days'], absent_days=aggregates['absent_days'])
             self.aggregation_label.setText(agg_text)
         except Exception as e:
             self.logger.error(f"Error calculating aggregates: {e}", exc_info=True)
@@ -301,19 +296,19 @@ class AttendanceView(QWidget):
             return
 
         # Actions
-        mark_absent_action = QAction("Mark Absent", self)
+        mark_absent_action = QAction(_("attendance_context_mark_absent"), self)
         mark_absent_action.triggered.connect(lambda: self.mark_selected_absent())
         menu.addAction(mark_absent_action)
 
-        add_note_action = QAction("Add/Edit Note", self)
+        add_note_action = QAction(_("attendance_context_add_edit_note"), self)
         add_note_action.triggered.connect(lambda: self.add_note_to_selected())
         menu.addAction(add_note_action)
 
-        delete_row_action = QAction("Delete Record", self)
+        delete_row_action = QAction(_("attendance_context_delete_record"), self)
         delete_row_action.triggered.connect(lambda: self.delete_selected_record())
         menu.addAction(delete_row_action)
 
-        duplicate_row_action = QAction("Duplicate Record", self)
+        duplicate_row_action = QAction(_("attendance_context_duplicate_record"), self)
         duplicate_row_action.triggered.connect(lambda: self.duplicate_selected_record())
         menu.addAction(duplicate_row_action)
 

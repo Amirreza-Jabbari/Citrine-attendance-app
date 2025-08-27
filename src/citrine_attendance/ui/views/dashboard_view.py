@@ -13,6 +13,7 @@ from ...services.employee_service import employee_service
 from ...services.attendance_service import attendance_service
 from ...database import get_db_session
 from ...date_utils import gregorian_to_jalali, format_jalali_date
+from ...locale import _
 
 
 class DashboardView(QWidget):
@@ -41,7 +42,7 @@ class DashboardView(QWidget):
         main_layout.addLayout(kpi_cards_layout)
 
         # Quick Actions Section
-        actions_label = QLabel("Quick Actions:")
+        actions_label = QLabel(_("dashboard_quick_actions"))
         actions_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(actions_label)
 
@@ -66,9 +67,9 @@ class DashboardView(QWidget):
             border: 1px solid #e0e0e0;
         """)
         welcome_layout = QHBoxLayout(welcome_card)
-        welcome_label = QLabel(f"Welcome, {self.current_user.username}!")
+        welcome_label = QLabel(_("dashboard_welcome", username=self.current_user.username))
         welcome_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        role_label = QLabel(f"Role: {self.current_user.role.capitalize()}")
+        role_label = QLabel(_("dashboard_role", role=self.current_user.role.capitalize()))
         role_label.setStyleSheet("color: #757575;")
         # Spacer to push role label to the right
         welcome_layout.addWidget(welcome_label)
@@ -86,8 +87,8 @@ class DashboardView(QWidget):
         self.kpi_absent_value = QLabel("0")
 
         kpi_data = [
-            {"title": "Present Today", "value_label": self.kpi_present_value, "color": "#c8e6c9", "tooltip": "Employees clocked in today"},
-            {"title": "Absent Today", "value_label": self.kpi_absent_value, "color": "#ffcdd2", "tooltip": "Employees not clocked in today"},
+            {"title": _("dashboard_present_today"), "value_label": self.kpi_present_value, "color": "#c8e6c9", "tooltip": "Employees clocked in today"},
+            {"title": _("dashboard_absent_today"), "value_label": self.kpi_absent_value, "color": "#ffcdd2", "tooltip": "Employees not clocked in today"},
         ]
 
         self.kpi_cards = [] # Keep references to cards for potential styling updates
@@ -128,7 +129,7 @@ class DashboardView(QWidget):
         clockin_layout = QVBoxLayout(clockin_frame)
 
         title_layout = QHBoxLayout()
-        title_label = QLabel("Quick Clock-In/Out")
+        title_label = QLabel(_("dashboard_quick_clock_in_out"))
         title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
         title_layout.addWidget(title_label)
         title_layout.addStretch()
@@ -136,7 +137,7 @@ class DashboardView(QWidget):
 
         # Employee selection
         emp_layout = QHBoxLayout()
-        emp_layout.addWidget(QLabel("Select Employee:"))
+        emp_layout.addWidget(QLabel(_("dashboard_select_employee")))
         self.employee_combo = QComboBox()
         self.employee_combo.setMinimumWidth(200)
         emp_layout.addWidget(self.employee_combo)
@@ -145,11 +146,11 @@ class DashboardView(QWidget):
 
         # Action buttons
         btn_layout = QHBoxLayout()
-        self.clockin_btn = QPushButton("Clock In")
+        self.clockin_btn = QPushButton(_("dashboard_clock_in"))
         self.clockin_btn.setStyleSheet(self.get_button_style("#11563a")) # Brand color
         # self.clockin_btn.clicked.connect(self.on_clockin_clicked) # Connect later
 
-        self.clockout_btn = QPushButton("Clock Out")
+        self.clockout_btn = QPushButton(_("dashboard_clock_out"))
         self.clockout_btn.setStyleSheet(self.get_button_style("#ffa500")) # Secondary color
         # self.clockout_btn.clicked.connect(self.on_clockout_clicked) # Connect later
 
@@ -233,7 +234,7 @@ class DashboardView(QWidget):
         """Handle Clock In or Clock Out button clicks."""
         emp_id = self.employee_combo.currentData()
         if not emp_id:
-            QMessageBox.warning(self, "No Employee Selected", "Please select an employee first.")
+            QMessageBox.warning(self, _("dashboard_no_employee_selected"), _("dashboard_please_select_employee"))
             return
         
         action_name = "Unknown Action" # Default value
@@ -255,9 +256,8 @@ class DashboardView(QWidget):
 
             QMessageBox.information(
                 self,
-                "Success",
-                f"{action_name} recorded successfully for {self.employee_combo.currentText()} "
-                f"on {record.date.strftime('%Y-%m-%d')} at {record.updated_at.strftime('%H:%M:%S')}."
+                _("dashboard_success"),
+                _("dashboard_action_recorded", action=action_name, employee=self.employee_combo.currentText(), date=record.date.strftime('%Y-%m-%d'), time=record.updated_at.strftime('%H:%M:%S'))
             )
             self.logger.info(f"{action_name} successful for Employee ID {emp_id}.")
             # Refresh KPIs to reflect the change

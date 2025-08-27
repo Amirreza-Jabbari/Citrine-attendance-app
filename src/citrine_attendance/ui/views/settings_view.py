@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt
 from ...config import config
 from ...services.user_service import user_service, UserServiceError
 from ...database import get_db_session, User
+from ...locale import _
 
 
 class SettingsView(QWidget):
@@ -33,7 +34,7 @@ class SettingsView(QWidget):
         layout.setSpacing(15)
         layout.setContentsMargins(15, 15, 15, 15)
 
-        title_label = QLabel("Application Settings")
+        title_label = QLabel(_("settings_title"))
         title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(title_label)
 
@@ -50,29 +51,29 @@ class SettingsView(QWidget):
         self.language_combo = QComboBox()
         self.language_combo.addItem("English", "en")
         self.language_combo.addItem("Persian (فارسی)", "fa")
-        general_form.addRow("Language:", self.language_combo)
+        general_form.addRow(_("settings_language"), self.language_combo)
 
         # Date Format
         self.date_format_combo = QComboBox()
         self.date_format_combo.addItem("Jalali and Gregorian", "both")
         self.date_format_combo.addItem("Jalali Only", "jalali")
         self.date_format_combo.addItem("Gregorian Only", "gregorian")
-        general_form.addRow("Date Format:", self.date_format_combo)
+        general_form.addRow(_("settings_date_format"), self.date_format_combo)
 
         # DB Path Override
         db_layout = QHBoxLayout()
         self.db_path_edit = QLineEdit()
         self.db_path_edit.setPlaceholderText("Leave blank to use default location")
-        self.browse_db_btn = QPushButton("Browse...")
+        self.browse_db_btn = QPushButton(_("settings_browse"))
         self.browse_db_btn.clicked.connect(self.browse_db_path)
         db_layout.addWidget(self.db_path_edit)
         db_layout.addWidget(self.browse_db_btn)
-        general_form.addRow("Database Path (Override):", db_layout)
+        general_form.addRow(_("settings_db_path"), db_layout)
 
         general_layout.addLayout(general_form)
         general_layout.addStretch()
 
-        self.tabs.addTab(self.general_tab, "General")
+        self.tabs.addTab(self.general_tab, _("settings_general_tab"))
 
         # --- Backup Settings Tab ---
         self.backup_tab = QWidget()
@@ -83,80 +84,80 @@ class SettingsView(QWidget):
         self.backup_freq_spinbox = QSpinBox()
         self.backup_freq_spinbox.setRange(0, 365) # 0 = disabled?
         self.backup_freq_spinbox.setValue(1) # Default daily
-        backup_form.addRow("Backup Frequency (Days):", self.backup_freq_spinbox)
+        backup_form.addRow(_("settings_backup_frequency"), self.backup_freq_spinbox)
 
         # Backup Retention
         self.backup_retention_spinbox = QSpinBox()
         self.backup_retention_spinbox.setRange(1, 1000)
         self.backup_retention_spinbox.setValue(10) # Default keep 10
-        backup_form.addRow("Keep Last N Backups:", self.backup_retention_spinbox)
+        backup_form.addRow(_("settings_backup_retention"), self.backup_retention_spinbox)
 
         # Backup Encryption
-        self.backup_encrypt_checkbox = QCheckBox("Enable Backup Encryption (requires password)")
+        self.backup_encrypt_checkbox = QCheckBox(_("settings_backup_encryption"))
         self.backup_encrypt_checkbox.setEnabled(False) # Feature placeholder
         backup_form.addRow(self.backup_encrypt_checkbox)
 
         backup_layout.addLayout(backup_form)
         backup_layout.addStretch()
 
-        self.tabs.addTab(self.backup_tab, "Backups")
+        self.tabs.addTab(self.backup_tab, _("settings_backups_tab"))
 
         # --- User Management Tab (Admin Only) ---
         self.users_tab = QWidget()
         users_layout = QVBoxLayout(self.users_tab)
 
-        self.users_info_label = QLabel("Manage user accounts. Only Admins can create/delete users.")
+        self.users_info_label = QLabel(_("settings_users_info"))
         users_layout.addWidget(self.users_info_label)
 
         # Add User Form
-        self.add_user_group = QGroupBox("Add New User")
+        self.add_user_group = QGroupBox(_("settings_add_user_group"))
         add_user_layout = QFormLayout(self.add_user_group)
 
         self.new_username_edit = QLineEdit()
-        add_user_layout.addRow("Username:", self.new_username_edit)
+        add_user_layout.addRow(_("settings_new_username"), self.new_username_edit)
 
         self.new_password_edit = QLineEdit()
         self.new_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        add_user_layout.addRow("Password:", self.new_password_edit)
+        add_user_layout.addRow(_("settings_new_password"), self.new_password_edit)
 
         self.new_role_combo = QComboBox()
         self.new_role_combo.addItem("Operator", "operator")
         self.new_role_combo.addItem("Admin", "admin")
-        add_user_layout.addRow("Role:", self.new_role_combo)
+        add_user_layout.addRow(_("settings_new_role"), self.new_role_combo)
 
-        self.add_user_button = QPushButton("Add User")
+        self.add_user_button = QPushButton(_("settings_add_user_button"))
         self.add_user_button.clicked.connect(self.add_new_user)
         add_user_layout.addRow(self.add_user_button)
 
         users_layout.addWidget(self.add_user_group)
 
         # User List/Management (Placeholder - could be a table)
-        self.users_list_label = QLabel("Existing Users:")
+        self.users_list_label = QLabel(_("settings_existing_users"))
         users_layout.addWidget(self.users_list_label)
         self.users_list_text = QTextEdit()
         self.users_list_text.setReadOnly(True)
         users_layout.addWidget(self.users_list_text, 1) # Stretch
 
-        self.refresh_users_button = QPushButton("Refresh User List")
+        self.refresh_users_button = QPushButton(_("settings_refresh_user_list"))
         self.refresh_users_button.clicked.connect(self.load_users_list)
         users_layout.addWidget(self.refresh_users_button)
 
-        self.tabs.addTab(self.users_tab, "Users")
+        self.tabs.addTab(self.users_tab, _("settings_users_tab"))
 
         # --- Audit Log Tab (Admin Only) ---
         self.audit_tab = QWidget()
         audit_layout = QVBoxLayout(self.audit_tab)
-        audit_layout.addWidget(QLabel("Recent Audit Log Entries:"))
+        audit_layout.addWidget(QLabel(_("settings_audit_log_header")))
         self.audit_log_text = QTextEdit()
         self.audit_log_text.setReadOnly(True)
         audit_layout.addWidget(self.audit_log_text, 1) # Stretch
-        self.refresh_audit_button = QPushButton("Refresh Audit Log")
+        self.refresh_audit_button = QPushButton(_("settings_refresh_audit_log"))
         self.refresh_audit_button.clicked.connect(self.load_audit_log)
         audit_layout.addWidget(self.refresh_audit_button)
-        self.tabs.addTab(self.audit_tab, "Audit Log")
+        self.tabs.addTab(self.audit_tab, _("settings_audit_log_tab"))
 
         # --- Save Button ---
-        self.save_button = QPushButton("Save Settings")
+        self.save_button = QPushButton(_("settings_save_button"))
         self.save_button.setStyleSheet("background-color: #11563a; color: white; padding: 10px; font-size: 16px;")
         self.save_button.clicked.connect(self.save_settings)
         layout.addWidget(self.save_button)
@@ -223,15 +224,15 @@ class SettingsView(QWidget):
             config.update_setting("backup_retention_count", self.backup_retention_spinbox.value())
             config.update_setting("enable_backup_encryption", self.backup_encrypt_checkbox.isChecked())
 
-            QMessageBox.information(self, "Settings Saved", "Settings have been saved successfully.")
+            QMessageBox.information(self, "Settings Saved", _("settings_saved_message"))
             self.logger.info("Settings saved by user.")
 
             # Check if a restart is needed (e.g., DB path, language)
             # For simplicity, always prompt for restart if critical settings change
             # A more nuanced approach would check specific values
             reply = QMessageBox.question(
-                self, 'Restart Required',
-                "Some settings might require a restart to take full effect. Restart now?",
+                self, _("settings_restart_required_title"),
+                _("settings_restart_required_message"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
@@ -242,13 +243,13 @@ class SettingsView(QWidget):
 
         except Exception as e:
             self.logger.error(f"Error saving settings: {e}", exc_info=True)
-            QMessageBox.critical(self, "Save Error", f"Failed to save settings: {e}")
+            QMessageBox.critical(self, _("settings_save_error"), _("settings_failed_to_save", error=e))
 
     # --- User Management ---
     def add_new_user(self):
         """Add a new user account."""
         if self.current_user.role != "admin":
-            QMessageBox.warning(self, "Access Denied", "Only administrators can add users.")
+            QMessageBox.warning(self, _("settings_access_denied"), _("settings_only_admins_add_users"))
             return
 
         username = self.new_username_edit.text().strip()
@@ -256,14 +257,14 @@ class SettingsView(QWidget):
         role = self.new_role_combo.currentData()
 
         if not username or not password:
-            QMessageBox.warning(self, "Input Error", "Username and password are required.")
+            QMessageBox.warning(self, _("settings_input_error"), _("settings_username_password_required"))
             return
 
         try:
             db_session = user_service._get_session()
             try:
                 user_service.create_user(username, password, role, db=db_session)
-                QMessageBox.information(self, "Success", f"User '{username}' created successfully.")
+                QMessageBox.information(self, "Success", _("settings_user_created_success", username=username))
                 self.logger.info(f"New user '{username}' (role: {role}) created by {self.current_user.username}.")
                 # Clear input fields
                 self.new_username_edit.clear()
@@ -274,12 +275,12 @@ class SettingsView(QWidget):
                 db_session.close()
         except Exception as e: # UserServiceError or IntegrityError etc.
             self.logger.error(f"Error creating user '{username}': {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to create user: {e}")
+            QMessageBox.critical(self, "Error", _("settings_failed_to_create_user", error=e))
 
     def load_users_list(self):
         """Load and display the list of users."""
         if self.current_user.role != "admin":
-            self.users_list_text.setPlainText("Access restricted to administrators.")
+            self.users_list_text.setPlainText(_("settings_access_restricted_to_admins"))
             return
 
         try:
@@ -296,13 +297,13 @@ class SettingsView(QWidget):
                 db_session.close()
         except Exception as e:
             self.logger.error(f"Error loading users list: {e}", exc_info=True)
-            self.users_list_text.setPlainText(f"Error loading users: {e}")
+            self.users_list_text.setPlainText(_("settings_error_loading_users", error=e))
 
     # --- Audit Log ---
     def load_audit_log(self):
         """Load and display recent audit log entries."""
         if self.current_user.role != "admin":
-            self.audit_log_text.setPlainText("Access restricted to administrators.")
+            self.audit_log_text.setPlainText(_("settings_access_restricted_to_admins"))
             return
 
         try:
@@ -325,7 +326,7 @@ class SettingsView(QWidget):
                 db_session.close()
         except Exception as e:
             self.logger.error(f"Error loading audit log: {e}", exc_info=True)
-            self.audit_log_text.setPlainText(f"Error loading audit log: {e}")
+            self.audit_log_text.setPlainText(_("settings_error_loading_audit_log", error=e))
 
 # Example usage (if run directly)
 # if __name__ == '__main__':
