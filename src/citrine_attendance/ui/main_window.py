@@ -311,7 +311,7 @@ class MainWindow(QMainWindow):
         self.logger.debug("Connected employee_changed signal from EmployeeView to AttendanceView.")
 
         # Also, reload the employee list in the Dashboard's Quick Clock-In
-        self.employees_view.employee_changed.connect(self.dashboard_view.load_employees)
+        self.employees_view.employee_changed.connect(self.dashboard_view.refresh_data)
         self.logger.debug("Connected employee_changed signal from EmployeeView to DashboardView.")
 
     def switch_view(self, index: int):
