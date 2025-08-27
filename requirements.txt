@@ -1,0 +1,35 @@
+# GUI Framework
+PyQt6>=6.4.0
+PyQt6-Qt6>=6.4.0
+
+# Database ORM
+SQLAlchemy>=2.0.0
+
+# Date/Time Handling (including Jalali support)
+jdatetime>=4.1.0
+
+# Excel Export
+openpyxl>=3.1.0
+# pandas (optional, can be useful for data manipulation before export)
+# pandas>=1.5.0
+
+# PDF Export
+reportlab>=4.0.0
+
+# Cross-platform paths
+appdirs>=1.4.4
+
+# Cryptography (for backup encryption)
+cryptography>=41.0.0
+
+# Password Hashing
+bcrypt>=4.0.0
+
+# Configuration (simple JSON handling is often enough, but configobj or similar could be used)
+# configobj # Optional, if settings get complex
+
+# Testing
+pytest>=7.0.0
+
+# Logging (built-in, but handlers might be needed)
+# Standard library, no install needed
