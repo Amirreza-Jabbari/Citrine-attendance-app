@@ -163,6 +163,7 @@ class EmployeeView(QWidget):
                 f"Employee '{new_employee.first_name} {new_employee.last_name}' added successfully."
             )
             self.logger.info(f"Employee added via UI: {new_employee.first_name} {new_employee.last_name}")
+            self.employee_changed.emit() # EMIT SIGNAL
 
         except EmployeeAlreadyExistsError as e:
             self.logger.warning(f"Add Employee failed (duplicate): {e}")
@@ -223,6 +224,7 @@ class EmployeeView(QWidget):
                 f"Employee '{updated_employee.first_name} {updated_employee.last_name}' updated successfully."
             )
             self.logger.info(f"Employee updated via UI: ID {updated_employee.id}")
+            self.employee_changed.emit() # EMIT SIGNAL
 
             # The model's update_employee calls load_data which refreshes the view.
 
@@ -278,6 +280,7 @@ class EmployeeView(QWidget):
                     _("employee_deleted_success", employee_name=f"{employee_to_delete.first_name} {employee_to_delete.last_name}")
                 )
                 self.logger.info(f"Employee deleted via UI: ID {employee_to_delete.id}")
+                self.employee_changed.emit() # EMIT SIGNAL
 
                 # Model refresh handled by remove_employee
                 # Disable buttons as selection is now invalid

@@ -6,12 +6,14 @@ from datetime import date, time, datetime
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QPushButton, QMessageBox, QApplication, QDateEdit, QTimeEdit, QTextEdit
+    QPushButton, QMessageBox, QApplication, QDateEdit, QTextEdit
 )
 from PyQt6.QtCore import Qt, QDate, QTime, pyqtSignal
 
 from ...services.employee_service import employee_service
 from ...database import get_db_session
+from ..widgets.custom_time_edit import CustomTimeEdit # Import custom widget
+import jdatetime
 
 
 class AddAttendanceDialog(QDialog):
@@ -31,6 +33,7 @@ class AddAttendanceDialog(QDialog):
 
         self.init_ui()
         self.load_employees()
+        self.update_jalali_label() # Set initial Jalali date
 
     def init_ui(self):
         """Initialize the dialog UI."""
@@ -51,26 +54,28 @@ class AddAttendanceDialog(QDialog):
         form_layout.addRow("Employee*:", self.employee_combo)
 
         # Date
+        date_layout = QHBoxLayout()
         self.date_edit = QDateEdit()
         self.date_edit.setCalendarPopup(True)
         self.date_edit.setDate(QDate.currentDate()) # Default to today
-        form_layout.addRow("Date*:", self.date_edit)
-
+        self.date_edit.dateChanged.connect(self.update_jalali_label)
+        self.jalali_label = QLabel()
+        self.jalali_label.setStyleSheet("font-size: 11px; color: gray; padding-left: 10px;")
+        date_layout.addWidget(self.date_edit)
+        date_layout.addWidget(self.jalali_label)
+        date_layout.addStretch()
+        form_layout.addRow("Date*:", date_layout)
+        
         # Time In
-        self.time_in_edit = QTimeEdit()
-        self.time_in_edit.setDisplayFormat("HH:mm")
+        self.time_in_edit = CustomTimeEdit()
         # Set default time in to 09:00
         self.time_in_edit.setTime(QTime(9, 0))
         form_layout.addRow("Time In:", self.time_in_edit)
 
         # Time Out
-        self.time_out_edit = QTimeEdit()
-        self.time_out_edit.setDisplayFormat("HH:mm")
-        # Leave time out empty initially, or set a default like 17:00
-        # self.time_out_edit.setTime(QTime(17, 0))
-        # To make it truly optional, we can leave it as is (00:00) and handle it in the model/service
-        # Or clear it explicitly
-        self.time_out_edit.setTime(QTime(0, 0)) # Will be treated as None if not changed
+        self.time_out_edit = CustomTimeEdit()
+        # Leave time out empty initially
+        self.time_out_edit.setTime(QTime(0, 0))
         form_layout.addRow("Time Out:", self.time_out_edit)
 
         # Note
@@ -110,6 +115,24 @@ class AddAttendanceDialog(QDialog):
             if self.db_session:
                 self.db_session.close()
                 self.db_session = None
+
+    def update_jalali_label(self):
+        """Update the label with the Jalali equivalent of the selected date."""
+        qdate = self.date_edit.date()
+        if not qdate.isNull():
+            try:
+                py_date = qdate.toPyDate()
+                jalali_date = jdatetime.date.fromgregorian(date=py_date)
+                digit_map = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
+                day_str = str(jalali_date.day).translate(digit_map)
+                month_name = jalali_date.j_months[jalali_date.month - 1]
+                year_str = str(jalali_date.year).translate(digit_map)
+                self.jalali_label.setText(f"{day_str} {month_name} {year_str}")
+            except Exception as e:
+                self.logger.warning(f"Error converting date to Jalali: {e}")
+                self.jalali_label.setText("")
+        else:
+            self.jalali_label.setText("")
 
     def handle_add(self):
         """Handle the 'Add Record' button click."""

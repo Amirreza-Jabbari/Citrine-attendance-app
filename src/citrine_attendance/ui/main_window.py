@@ -90,6 +90,8 @@ class MainWindow(QMainWindow):
         self.init_main_ui()
         # Update UI elements based on user role
         self.update_ui_for_user_role()
+        # Connect signals between views
+        self.connect_signals()
         # --- Setup automatic backups after login ---
         self.setup_automatic_backup()
         # Now that UI is set up, show the main window
@@ -301,6 +303,16 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.backups_view)
         self.stacked_widget.addWidget(self.archive_view)
         self.stacked_widget.addWidget(self.settings_view)
+
+    def connect_signals(self):
+        """Connect signals between different views for real-time updates."""
+        # When an employee is changed in EmployeeView, reload the filter data in AttendanceView
+        self.employees_view.employee_changed.connect(self.attendance_view.load_filter_data)
+        self.logger.debug("Connected employee_changed signal from EmployeeView to AttendanceView.")
+
+        # Also, reload the employee list in the Dashboard's Quick Clock-In
+        self.employees_view.employee_changed.connect(self.dashboard_view.load_employees)
+        self.logger.debug("Connected employee_changed signal from EmployeeView to DashboardView.")
 
     def switch_view(self, index: int):
         """Switch the main view in the stacked widget and update button states."""

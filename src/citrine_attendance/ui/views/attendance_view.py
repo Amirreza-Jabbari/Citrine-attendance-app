@@ -195,6 +195,9 @@ class AttendanceView(QWidget):
         filter_layout.addStretch() # Push everything to the left
 
         # --- Initialize Jalali labels ---
+        # Connect signals to update Jalali labels
+        self.start_date_edit.dateChanged.connect(self.on_date_range_changed)
+        self.end_date_edit.dateChanged.connect(self.on_date_range_changed)
         # Call the handler once to set initial display
         self.on_date_range_changed()
 
@@ -204,6 +207,9 @@ class AttendanceView(QWidget):
             session_gen = get_db_session()
             self.db_session = next(session_gen)
 
+            # Store current selection
+            current_emp_id = self.employee_filter_combo.currentData()
+
             # Load employees for the dropdown
             employees = employee_service.get_all_employees(db=self.db_session)
             self.employee_filter_combo.clear()
@@ -211,6 +217,13 @@ class AttendanceView(QWidget):
             for emp in employees:
                 display_name = f"{emp.first_name} {emp.last_name}".strip() or emp.email
                 self.employee_filter_combo.addItem(display_name, emp.id)
+
+            # Restore previous selection if it still exists
+            index = self.employee_filter_combo.findData(current_emp_id)
+            if index != -1:
+                self.employee_filter_combo.setCurrentIndex(index)
+            
+            self.logger.debug("Employee filter data reloaded.")
 
         except Exception as e:
             self.logger.error(f"Error loading filter data: {e}", exc_info=True)
