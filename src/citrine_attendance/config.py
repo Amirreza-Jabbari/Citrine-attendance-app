@@ -1,3 +1,4 @@
+# src/citrine_attendance/config.py
 import os
 import appdirs
 import json
@@ -16,6 +17,9 @@ DEFAULT_SETTINGS = {
     "backup_retention_count": 10, # Keep last 10 backups
     "db_path_override": None, # Use default if None
     "enable_backup_encryption": False,
+    "default_launch_time_minutes": 60, # New: Default lunch time in minutes
+    "workday_hours": 8, # New: Standard work hours in a day
+    "late_threshold_time": "10:00", # New: Time after which an employee is considered late
     # Add more settings as needed
 }
 
@@ -77,7 +81,13 @@ class AppConfig:
             self.settings[key] = value
             self.save_settings()
         else:
-            logging.warning(f"Attempted to update unknown setting key: {key}")
+            # If key is not in self.settings but is in DEFAULT_SETTINGS, add it
+            if key in DEFAULT_SETTINGS:
+                self.settings[key] = value
+                self.save_settings()
+            else:
+                logging.warning(f"Attempted to update unknown setting key: {key}")
+
 
 # Global config instance
 config = AppConfig()

@@ -34,18 +34,25 @@ class Attendance(Base):
     date = Column(Date, nullable=False) # Stored as ISO Gregorian YYYY-MM-DD
     time_in = Column(Time, nullable=True)
     time_out = Column(Time, nullable=True)
-    duration_minutes = Column(Integer, nullable=True) # Derived/calculated field
-    status = Column(String, nullable=False) # 'present', 'absent', 'late', 'halfday'
+    
+    # --- New Launch Time Fields ---
+    launch_start_time = Column(Time, nullable=True)
+    launch_end_time = Column(Time, nullable=True)
+
+    # --- Derived/Calculated Fields ---
+    duration_minutes = Column(Integer, nullable=True) # Total duration in minutes
+    launch_duration_minutes = Column(Integer, nullable=True) # Launch duration in minutes
+    tardiness_minutes = Column(Integer, nullable=True) # Lateness in minutes
+    main_work_minutes = Column(Integer, nullable=True) # Regular work time
+    overtime_minutes = Column(Integer, nullable=True) # Overtime work
+
+    status = Column(String, nullable=False) # 'present', 'absent'
     note = Column(Text, nullable=True)
 
     created_by = Column(String, nullable=True) # Username or identifier
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     
-    # --- Archive Flag ---
-    # Note: The model defines it as NOT NULL, but the migration below adds it as NULLABLE first 
-    # to handle existing databases, then relies on the default. 
-    # SQLAlchemy ORM should handle this, but the DB column might be nullable if migrated.
     is_archived = Column(Boolean, default=False, nullable=False) 
 
     # Relationship
@@ -58,7 +65,7 @@ Index('idx_attendance_date_employee', Attendance.date, Attendance.employee_id)
 
 class BackupRecord(Base):
     __tablename__ = 'backups'
-
+    # ... (no changes here)
     id = Column(Integer, primary_key=True)
     file_name = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
@@ -66,9 +73,10 @@ class BackupRecord(Base):
     size_bytes = Column(Integer, nullable=False)
     encrypted = Column(Boolean, default=False)
 
+
 class User(Base):
      __tablename__ = 'users'
-
+     # ... (no changes here)
      id = Column(Integer, primary_key=True)
      username = Column(String, unique=True, nullable=False)
      password_hash = Column(String, nullable=False) # Will store bcrypt hash
@@ -76,9 +84,10 @@ class User(Base):
      created_at = Column(DateTime, default=datetime.datetime.utcnow)
      last_login = Column(DateTime, nullable=True)
 
+
 class AuditLog(Base):
     __tablename__ = 'audit_log'
-
+    # ... (no changes here)
     id = Column(Integer, primary_key=True)
     table_name = Column(String, nullable=False) # e.g., 'employees', 'attendance'
     record_id = Column(Integer, nullable=False) # ID of the record in the table
@@ -103,57 +112,50 @@ def init_db():
     database_url = get_database_url()
     logging.info(f"Initializing database at: {database_url}")
     try:
-        # Use check_same_thread=False for SQLite in multi-threaded apps (like Qt)
         engine = create_engine(database_url, echo=False, connect_args={"check_same_thread": False})
         SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-        # Ensure foreign key constraints are enforced in SQLite
         @event.listens_for(engine, "connect")
         def set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
-        # Create tables if they don't exist
         Base.metadata.create_all(bind=engine)
         logging.info("Database tables created/verified.")
 
-        # --- MIGRATION: Add 'is_archived' column if it doesn't exist ---
-        # This handles databases created before the column was added to the model.
+        # --- MIGRATION: Add new columns if they don't exist ---
         if engine and inspect(engine).has_table('attendance'):
             inspector = inspect(engine)
             attendance_columns = [column['name'] for column in inspector.get_columns('attendance')]
-
-            if 'is_archived' not in attendance_columns:
-                logging.warning("Migrating database: 'is_archived' column not found in 'attendance' table. Attempting to add it.")
-                # Use raw SQL to add the column.
-                # Import text for executing raw SQL
-                from sqlalchemy import text
-                try:
-                    # Get a connection from the engine
-                    with engine.connect() as connection:
-                        # Begin a transaction
-                        trans = connection.begin()
+            
+            new_columns = {
+                "launch_start_time": "ALTER TABLE attendance ADD COLUMN launch_start_time TIME",
+                "launch_end_time": "ALTER TABLE attendance ADD COLUMN launch_end_time TIME",
+                "launch_duration_minutes": "ALTER TABLE attendance ADD COLUMN launch_duration_minutes INTEGER",
+                "tardiness_minutes": "ALTER TABLE attendance ADD COLUMN tardiness_minutes INTEGER",
+                "main_work_minutes": "ALTER TABLE attendance ADD COLUMN main_work_minutes INTEGER",
+                "overtime_minutes": "ALTER TABLE attendance ADD COLUMN overtime_minutes INTEGER"
+            }
+            
+            from sqlalchemy import text
+            with engine.connect() as connection:
+                for col_name, alter_sql in new_columns.items():
+                    if col_name not in attendance_columns:
+                        logging.warning(f"Migrating database: '{col_name}' column not found in 'attendance' table. Adding it.")
                         try:
-                            # Use text() to wrap the raw SQL string
-                            connection.execute(text("ALTER TABLE attendance ADD COLUMN is_archived BOOLEAN DEFAULT 0"))
-                            # Commit the transaction
+                            trans = connection.begin()
+                            connection.execute(text(alter_sql))
                             trans.commit()
-                            logging.info("Successfully added 'is_archived' column (nullable with default 0) to 'attendance' table.")
-                        except Exception as inner_e:
-                            # Rollback the transaction on error
+                            logging.info(f"Successfully added '{col_name}' column to 'attendance' table.")
+                        except Exception as e:
                             trans.rollback()
-                            raise inner_e # Re-raise to be caught by the outer except
-                except Exception as e:
-                    error_msg = f"Failed to add 'is_archived' column during migration: {e}"
-                    logging.critical(error_msg)
-                    raise RuntimeError(error_msg) from e # Halt startup if migration fails
-            else:
-                logging.debug("'is_archived' column already exists in 'attendance' table. No migration needed.")
+                            logging.critical(f"Failed to add '{col_name}' column during migration: {e}")
+                            raise RuntimeError(f"Failed to migrate database for column {col_name}") from e
 
     except Exception as e:
         logging.critical(f"Failed to initialize database: {e}")
-        raise # Re-raise to halt application startup if DB init fails
+        raise
 
 def get_db_session():
     """Provide a database session."""
@@ -165,10 +167,6 @@ def get_db_session():
     finally:
         db.close()
 
-# --- Utility for Timestamps ---
 def utcnow():
     """Get current UTC time."""
     return datetime.datetime.utcnow()
-
-# Initialize on import (or call explicitly in main)
-# init_db() # Better to call explicitly in main.py to control when it happens

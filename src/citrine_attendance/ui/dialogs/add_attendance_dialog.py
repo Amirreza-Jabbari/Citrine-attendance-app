@@ -12,28 +12,27 @@ from PyQt6.QtCore import Qt, QDate, QTime, pyqtSignal
 
 from ...services.employee_service import employee_service
 from ...database import get_db_session
-from ..widgets.custom_time_edit import CustomTimeEdit # Import custom widget
+from ..widgets.custom_time_edit import CustomTimeEdit
 import jdatetime
 
 
 class AddAttendanceDialog(QDialog):
     """A dialog window for adding a manual attendance record."""
 
-    # Signal emitted when a record is successfully added
-    record_added = pyqtSignal(object) # Emits the added record data dict
+    record_added = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.logger = logging.getLogger(__name__)
         self.setWindowTitle("Add Manual Attendance Record")
         self.setModal(True)
-        self.resize(400, 350)
+        self.resize(450, 450)
         self.db_session = None
-        self.employees = [] # List of Employee objects
+        self.employees = []
 
         self.init_ui()
         self.load_employees()
-        self.update_jalali_label() # Set initial Jalali date
+        self.update_jalali_label()
 
     def init_ui(self):
         """Initialize the dialog UI."""
@@ -48,16 +47,15 @@ class AddAttendanceDialog(QDialog):
         form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         form_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
-        # Employee selection
+        # Employee
         self.employee_combo = QComboBox()
-        self.employee_combo.setMinimumWidth(200)
+        self.employee_combo.setMinimumWidth(250)
         form_layout.addRow("Employee*:", self.employee_combo)
 
         # Date
         date_layout = QHBoxLayout()
-        self.date_edit = QDateEdit()
-        self.date_edit.setCalendarPopup(True)
-        self.date_edit.setDate(QDate.currentDate()) # Default to today
+        self.date_edit = QDateEdit(calendarPopup=True)
+        self.date_edit.setDate(QDate.currentDate())
         self.date_edit.dateChanged.connect(self.update_jalali_label)
         self.jalali_label = QLabel()
         self.jalali_label.setStyleSheet("font-size: 11px; color: gray; padding-left: 10px;")
@@ -66,18 +64,25 @@ class AddAttendanceDialog(QDialog):
         date_layout.addStretch()
         form_layout.addRow("Date*:", date_layout)
         
-        # Time In
+        # Time In/Out
         self.time_in_edit = CustomTimeEdit()
-        # Set default time in to 09:00
         self.time_in_edit.setTime(QTime(9, 0))
         form_layout.addRow("Time In:", self.time_in_edit)
 
-        # Time Out
         self.time_out_edit = CustomTimeEdit()
-        # Leave time out empty initially
-        self.time_out_edit.setTime(QTime(0, 0))
         form_layout.addRow("Time Out:", self.time_out_edit)
+        
+        # --- New Launch Time Fields ---
+        self.launch_start_edit = CustomTimeEdit()
+        # You can set a default, e.g., 12:30
+        self.launch_start_edit.setTime(QTime(12, 30))
+        form_layout.addRow("Launch Start:", self.launch_start_edit)
 
+        self.launch_end_edit = CustomTimeEdit()
+        # You can set a default, e.g., 13:30
+        self.launch_end_edit.setTime(QTime(13, 30))
+        form_layout.addRow("Launch End:", self.launch_end_edit)
+        
         # Note
         self.note_edit = QTextEdit()
         self.note_edit.setMaximumHeight(80)
@@ -100,6 +105,7 @@ class AddAttendanceDialog(QDialog):
     def load_employees(self):
         """Load employees into the combo box."""
         try:
+            # ... (no changes here)
             session_gen = get_db_session()
             self.db_session = next(session_gen)
             self.employees = employee_service.get_all_employees(db=self.db_session)
@@ -118,6 +124,7 @@ class AddAttendanceDialog(QDialog):
 
     def update_jalali_label(self):
         """Update the label with the Jalali equivalent of the selected date."""
+        # ... (no changes here)
         qdate = self.date_edit.date()
         if not qdate.isNull():
             try:
@@ -134,49 +141,35 @@ class AddAttendanceDialog(QDialog):
         else:
             self.jalali_label.setText("")
 
+
     def handle_add(self):
         """Handle the 'Add Record' button click."""
         emp_id = self.employee_combo.currentData()
         if emp_id is None:
             QMessageBox.warning(self, "Validation Error", "Please select an employee.")
-            self.employee_combo.setFocus()
             return
 
-        qdate = self.date_edit.date()
-        if qdate.isNull():
-            QMessageBox.warning(self, "Validation Error", "Please select a date.")
-            self.date_edit.setFocus()
-            return
-        record_date = qdate.toPyDate()
+        record_date = self.date_edit.date().toPyDate()
 
-        # Get time in/out. If time is 00:00, treat as None (optional).
-        time_in_qtime = self.time_in_edit.time()
-        time_in = time_in_qtime.toPyTime() if not (time_in_qtime.hour() == 0 and time_in_qtime.minute() == 0) else None
+        def qtime_to_pytime(qtime_edit):
+            qtime = qtime_edit.time()
+            return qtime.toPyTime() if not (qtime.hour() == 0 and qtime.minute() == 0) else None
 
-        time_out_qtime = self.time_out_edit.time()
-        time_out = time_out_qtime.toPyTime() if not (time_out_qtime.hour() == 0 and time_out_qtime.minute() == 0) else None
-
+        time_in = qtime_to_pytime(self.time_in_edit)
+        time_out = qtime_to_pytime(self.time_out_edit)
+        launch_start = qtime_to_pytime(self.launch_start_edit)
+        launch_end = qtime_to_pytime(self.launch_end_edit)
+        
         note = self.note_edit.toPlainText().strip() or None
 
-        # Prepare data dictionary
         record_data = {
             'employee_id': emp_id,
             'date': record_date,
             'time_in': time_in,
             'time_out': time_out,
+            'launch_start': launch_start,
+            'launch_end': launch_end,
             'note': note
         }
 
-        # Emit the signal with the collected data
         self.record_added.emit(record_data)
-
-    # Dialog closing is handled by the parent view
-
-# Example usage (if run directly for testing)
-# if __name__ == '__main__':
-#     app = QApplication(sys.argv)
-#     from ...database import init_db
-#     init_db()
-#     dialog = AddAttendanceDialog()
-#     dialog.exec()
-#     sys.exit(app.exec())

@@ -1,58 +1,90 @@
 # src/citrine_attendance/services/export_service.py
-"""Service for exporting attendance data."""
 import csv
 import logging
 from pathlib import Path
 from typing import List, Dict, Any
 import datetime
-
-# Import jdatetime for Jalali date handling
 import jdatetime
-
-# For Excel export
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
-
-# For PDF export (basic example)
-from reportlab.lib.pagesizes import letter, A4
+from reportlab.lib.pagesizes import letter, A4, landscape
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.lib.units import inch
-
-# Import config to get user settings
 from ..config import config
+from ..utils.time_utils import minutes_to_hhmm # <-- Import the utility
 
 
 class ExportServiceError(Exception):
-    """Base exception for export service errors."""
     pass
 
 class ExportService:
-    """Handles exporting data to various formats."""
-
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+
+    def _process_data_for_export(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Process data for export, formatting dates and converting all minute fields to HH:MM.
+        """
+        processed_data = []
+        date_format_pref = config.settings.get("date_format", "both")
+
+        for row in data:
+            processed_row = row.copy()
+            
+            # Format Date
+            greg_date = processed_row.get("Date")
+            if isinstance(greg_date, datetime.date):
+                if date_format_pref == 'jalali':
+                    processed_row["Date"] = jdatetime.date.fromgregorian(date=greg_date).strftime("%Y/%m/%d")
+                elif date_format_pref == 'gregorian':
+                    processed_row["Date"] = greg_date.isoformat()
+                else: # both
+                    j_date_str = jdatetime.date.fromgregorian(date=greg_date).strftime("%Y/%m/%d")
+                    g_date_str = greg_date.isoformat()
+                    processed_row["Date"] = f"{j_date_str} | {g_date_str}"
+            
+            # Format Times (e.g., Time In, Time Out)
+            for key in ["Time In", "Time Out"]:
+                time_val = processed_row.get(key)
+                if isinstance(time_val, datetime.time):
+                    processed_row[key] = time_val.strftime("%H:M")
+
+            # --- Convert all minute fields to HH:MM strings and update headers ---
+            minute_keys = [
+                "Tardiness (min)", "Main Work (min)", "Overtime (min)", 
+                "Launch Time (min)", "Total Duration (min)"
+            ]
+            for key in minute_keys:
+                if key in processed_row:
+                    new_key = key.replace("(min)", "(H:M)").strip()  # Create new header name like "Tardiness (H:M)"
+                    # Pop the old key and value, and add the new key with the formatted value
+                    processed_row[new_key] = minutes_to_hhmm(processed_row.pop(key))
+            
+            processed_data.append(processed_row)
+        return processed_data
 
     def export_to_csv(self, data: List[Dict[str, Any]], filename: Path, delimiter: str = ',') -> Path:
         """Export data to a CSV file."""
         try:
             if not data:
                 raise ExportServiceError("No data provided for CSV export.")
+            
+            processed_data = self._process_data_for_export(data)
+            if not processed_data:
+                raise ExportServiceError("No data available after processing.")
 
-            fieldnames = data[0].keys() # Assumes all rows have the same keys
-
-            with open(filename, 'w', newline='', encoding='utf-8-sig') as csvfile: # utf-8-sig for Excel
+            fieldnames = processed_data[0].keys()
+            
+            with open(filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames, delimiter=delimiter)
                 writer.writeheader()
-                # Process data for Jalali dates before writing
-                processed_data = self._process_data_for_export(data)
                 writer.writerows(processed_data)
 
             self.logger.info(f"Data exported to CSV: {filename}")
             return filename
-
         except Exception as e:
             self.logger.error(f"Error exporting to CSV: {e}", exc_info=True)
             raise ExportServiceError(f"Failed to export to CSV: {e}") from e
@@ -62,214 +94,94 @@ class ExportService:
         try:
             if not data:
                 raise ExportServiceError("No data provided for XLSX export.")
+            
+            processed_data = self._process_data_for_export(data)
+            if not processed_data:
+                raise ExportServiceError("No data available after processing.")
 
             wb = Workbook()
             ws = wb.active
             ws.title = "Attendance Report"
 
-            # Headers
-            headers = list(data[0].keys())
+            headers = list(processed_data[0].keys())
             ws.append(headers)
-
-            # Data rows
-            processed_data = self._process_data_for_export(data)
+            
             for row_dict in processed_data:
-                # Maintain column order based on headers
                 row_data = [row_dict.get(h, "") for h in headers]
                 ws.append(row_data)
 
-            # --- Basic Formatting ---
+            # Formatting
             header_font = Font(bold=True)
-            header_fill = PatternFill(start_color="CCCCCC", end_color="CCCCCC", fill_type="solid")
-            center_alignment = Alignment(horizontal="center")
-
+            center_alignment = Alignment(horizontal="center", vertical="center")
             for col_num, column_title in enumerate(headers, 1):
                 cell = ws.cell(row=1, column=col_num)
                 cell.font = header_font
-                cell.fill = header_fill
-                # Try to auto-adjust column width
-                column_letter = get_column_letter(col_num)
-                # A simple way to set width based on header length
-                adjusted_width = len(str(column_title)) + 2
-                ws.column_dimensions[column_letter].width = min(adjusted_width, 50) # Cap width
-
-            # Center Time/Duration columns
-            time_cols = ["Time In", "Time Out", "Duration (Minutes)"]
-            for col_title in time_cols:
-                if col_title in headers:
-                    col_idx = headers.index(col_title) + 1
-                    for row in range(2, ws.max_row + 1): # Data rows
-                        ws.cell(row=row, column=col_idx).alignment = center_alignment
+                
+                max_length = len(str(column_title))
+                for row_idx in range(2, ws.max_row + 1):
+                    cell_value = ws.cell(row=row_idx, column=col_num).value
+                    if cell_value is not None:
+                        max_length = max(max_length, len(str(cell_value)))
+                adjusted_width = max_length + 4 # Add a bit more padding
+                ws.column_dimensions[get_column_letter(col_num)].width = min(adjusted_width, 40)
+                
+                # Center columns with time data
+                if "(h:m)" in column_title.lower() or "time" in column_title.lower():
+                    for row in range(1, ws.max_row + 1): # Include header
+                        ws.cell(row=row, column=col_num).alignment = center_alignment
 
             wb.save(filename)
             self.logger.info(f"Data exported to XLSX: {filename}")
             return filename
-
         except Exception as e:
             self.logger.error(f"Error exporting to XLSX: {e}", exc_info=True)
             raise ExportServiceError(f"Failed to export to XLSX: {e}") from e
 
     def export_to_pdf(self, data: List[Dict[str, Any]], filename: Path, title: str = "Attendance Report") -> Path:
-        """Export data to a PDF file (basic table format)."""
+        """Export data to a PDF file."""
         try:
             if not data:
                 raise ExportServiceError("No data provided for PDF export.")
 
-            # Create document
-            # Use config for page size or default to A4
-            page_size = A4 # or letter, or make configurable
-            doc = SimpleDocTemplate(str(filename), pagesize=page_size)
+            doc = SimpleDocTemplate(str(filename), pagesize=landscape(A4))
             elements = []
             styles = getSampleStyleSheet()
-
-            # Title
-            title_para = Paragraph(title, styles['Title'])
-            elements.append(title_para)
+            
+            elements.append(Paragraph(title, styles['Title']))
             elements.append(Spacer(1, 0.2*inch))
-
-            # Date of report
-            date_para = Paragraph(f"Report generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", styles['Normal'])
-            elements.append(date_para)
-            elements.append(Spacer(1, 0.2*inch))
-
-            # Table Data
+            
             processed_data = self._process_data_for_export(data)
             if not processed_data:
-                 raise ExportServiceError("No processed data available for PDF table.")
-
-            # Prepare table data (list of lists)
+                raise ExportServiceError("No data available after processing.")
+                
             headers = list(processed_data[0].keys())
-            table_data = [headers] # First row is headers
-            for row_dict in processed_data:
-                row_list = [str(row_dict.get(h, "")) for h in headers]
-                table_data.append(row_list)
-
-            # Create table
-            table = Table(table_data)
-
-            # Style the table
+            table_data = [headers] + [[str(row.get(h, "")) for h in headers] for row in processed_data]
+            
+            table = Table(table_data, repeatRows=1)
             style = TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'), # Header font
-                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black)
             ])
             table.setStyle(style)
 
-            # Alternate row coloring (optional)
-            for i in range(1, len(table_data)): # Start from 1 to skip header
+            for i, row in enumerate(table_data[1:], start=1):
                 if i % 2 == 0:
-                    bc = colors.lightgrey
-                else:
-                    bc = colors.whitesmoke
-                ts = TableStyle([('BACKGROUND', (0, i), (-1, i), bc)])
-                table.setStyle(ts)
-
+                    table.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.lightgrey)]))
+            
             elements.append(table)
             doc.build(elements)
 
             self.logger.info(f"Data exported to PDF: {filename}")
             return filename
-
         except Exception as e:
             self.logger.error(f"Error exporting to PDF: {e}", exc_info=True)
             raise ExportServiceError(f"Failed to export to PDF: {e}") from e
-
-    def _process_data_for_export(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Process raw data dictionary to format dates, especially adding Jalali representation.
-        This modifies the data dictionaries in place for export formats that need it.
-        Handles both datetime.date objects and ISO date strings for the 'Date' key.
-        """
-        processed_data = []
-        # Get date format preference from config
-        date_format_preference = config.settings.get("date_format", "both")
-
-        # Mapping for Persian digits
-        digit_map = str.maketrans('0123456789', '۰۱۲۳۴۵۶۷۸۹')
-
-        for row in data:
-            # Create a copy to avoid modifying the original data passed in
-            processed_row = row.copy()
-            
-            # --- Handle Date Conversion ---
-            greg_date_value = row.get("Date")
-            greg_date_obj = None
-
-            if greg_date_value:
-                try:
-                    # Determine the type of the date value and convert to datetime.date if necessary
-                    if isinstance(greg_date_value, datetime.date):
-                        greg_date_obj = greg_date_value
-                    elif isinstance(greg_date_value, str):
-                        greg_date_obj = datetime.date.fromisoformat(greg_date_value)
-                    else:
-                        # If it's neither, log a warning and treat as string
-                        self.logger.warning(f"Unexpected type for 'Date' in export data row: {type(greg_date_value)}. Attempting str conversion.")
-                        greg_date_obj = datetime.date.fromisoformat(str(greg_date_value))
-
-                    if greg_date_obj:
-                        # --- Format Date for Export based on Preference using jdatetime ---
-                        if date_format_preference == 'jalali':
-                            # Only Jalali
-                            jalali_date_obj = jdatetime.date.fromgregorian(date=greg_date_obj)
-                            # Format: ۷ خرداد ۱۴۰۳
-                            day_persian = ''.join(digit_map.get(d, d) for d in str(jalali_date_obj.day))
-                            month_name = jalali_date_obj.j_months[jalali_date_obj.month - 1] # j_months is zero-indexed
-                            year_persian = ''.join(digit_map.get(d, d) for d in str(jalali_date_obj.year))
-                            jalali_display_str = f"{day_persian} {month_name} {year_persian}"
-                            processed_row["Date"] = jalali_display_str
-                        
-                        elif date_format_preference == 'gregorian':
-                            # Only Gregorian ISO
-                            processed_row["Date"] = greg_date_obj.isoformat()
-                        
-                        elif date_format_preference == 'both':
-                            # Both Gregorian and Jalali (default/fallback)
-                            greg_iso_str = greg_date_obj.isoformat()
-                            jalali_date_obj = jdatetime.date.fromgregorian(date=greg_date_obj)
-                            # Format: ۷ خرداد ۱۴۰۳
-                            day_persian = ''.join(digit_map.get(d, d) for d in str(jalali_date_obj.day))
-                            month_name = jalali_date_obj.j_months[jalali_date_obj.month - 1]
-                            year_persian = ''.join(digit_map.get(d, d) for d in str(jalali_date_obj.year))
-                            jalali_display_str = f"{day_persian} {month_name} {year_persian}"
-                            processed_row["Date"] = f"{jalali_display_str} — {greg_iso_str}"
-                        
-                        else:
-                            # Default to 'both' if setting is unrecognized
-                            greg_iso_str = greg_date_obj.isoformat()
-                            jalali_date_obj = jdatetime.date.fromgregorian(date=greg_date_obj)
-                            # Format: ۷ خرداد ۱۴۰۳
-                            day_persian = ''.join(digit_map.get(d, d) for d in str(jalali_date_obj.day))
-                            month_name = jalali_date_obj.j_months[jalali_date_obj.month - 1]
-                            year_persian = ''.join(digit_map.get(d, d) for d in str(jalali_date_obj.year))
-                            jalali_display_str = f"{day_persian} {month_name} {year_persian}"
-                            processed_row["Date"] = f"{jalali_display_str} — {greg_iso_str}"
-
-                    # --- Ensure Time fields are formatted correctly ---
-                    # Excel/PDF writers usually handle time objects, but converting to string
-                    # ensures consistency, especially for CSV.
-                    time_in_val = processed_row.get("Time In")
-                    if isinstance(time_in_val, datetime.time):
-                        processed_row["Time In"] = time_in_val.strftime("%H:%M")
-
-                    time_out_val = processed_row.get("Time Out")
-                    if isinstance(time_out_val, datetime.time):
-                        processed_row["Time Out"] = time_out_val.strftime("%H:%M")
-
-                except (ValueError, TypeError) as e:
-                    # If date processing fails, log error and leave the original value
-                    self.logger.error(f"Error processing date '{greg_date_value}' for export: {e}")
-                    # Keep the original value in the row (it's already copied)
-            # If no 'Date' key or value is None/empty, it's copied as is.
-            
-            processed_data.append(processed_row)
-        return processed_data
-
 
 # Global instance
 export_service = ExportService()
