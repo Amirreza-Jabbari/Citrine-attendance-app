@@ -10,12 +10,12 @@ from ...services.attendance_service import attendance_service, AttendanceService
 from ...database import get_db_session, Attendance, Employee
 from ...date_utils import format_date_for_display
 from ...utils.time_utils import minutes_to_hhmm # <-- Import the new utility
-
+from ...locale import _ # <-- Import the translator function
 
 class AttendanceTableModel(QAbstractTableModel):
     """Custom model to display and manage attendance data in a QTableView."""
 
-    # --- Updated Column Definitions ---
+    # --- Column Definitions ---
     EMPLOYEE_NAME_COL = 0
     DATE_COL = 1
     TIME_IN_COL = 2
@@ -27,23 +27,6 @@ class AttendanceTableModel(QAbstractTableModel):
     TOTAL_DURATION_COL = 8
     STATUS_COL = 9
     NOTE_COL = 10
-    
-    # Hidden columns are not needed in the count for the view
-    
-    # --- Updated Column Headers ---
-    COLUMN_HEADERS = [
-        "Employee Name", "Date", "Time In", "Time Out", 
-        "Tardiness", "Main Work", "Overtime", "Launch",
-        "Total Duration", "Status", "Note"
-    ]
-    COLUMN_COUNT = len(COLUMN_HEADERS)
-
-    STATUS_DISPLAY = {
-        attendance_service.STATUS_PRESENT: "Present",
-        attendance_service.STATUS_ABSENT: "Absent",
-    }
-    STATUS_DISPLAY_INVERSE = {v: k for k, v in STATUS_DISPLAY.items()}
-
 
     def __init__(self, config):
         super().__init__()
@@ -52,19 +35,41 @@ class AttendanceTableModel(QAbstractTableModel):
         self.attendance_data: List[Attendance] = []
         self.employee_cache = {}
         self.filters = {}
+        # --- Translate Column Headers ---
+        self.COLUMN_HEADERS = [
+            _("attendance_header_employee"),
+            _("attendance_header_date"),
+            _("attendance_header_time_in"),
+            _("attendance_header_time_out"),
+            _("attendance_header_tardiness"),
+            _("attendance_header_main_work"),
+            _("attendance_header_overtime"),
+            _("attendance_header_launch"),
+            _("attendance_header_total_duration"),
+            _("attendance_header_status"),
+            _("attendance_header_notes")
+        ]
+        self.COLUMN_COUNT = len(self.COLUMN_HEADERS)
+
+        self.STATUS_DISPLAY = {
+            attendance_service.STATUS_PRESENT: _("attendance_filter_present"),
+            attendance_service.STATUS_ABSENT: _("attendance_filter_absent"),
+        }
+        self.STATUS_DISPLAY_INVERSE = {v: k for k, v in self.STATUS_DISPLAY.items()}
+
 
     def load_data(self):
         """Load attendance data based on current filters."""
         try:
             # The service now handles eager loading of employees
             records = attendance_service.get_attendance_records(**self.filters)
-            
+
             # Populate cache from the loaded records
             self.employee_cache = {
                 r.employee_id: f"{r.employee.first_name} {r.employee.last_name}".strip() or r.employee.email
                 for r in records if r.employee
             }
-            
+
             # Simple text search (client-side filtering after DB query)
             search_text = self.filters.get('search_text', '').lower()
             if search_text:
@@ -127,7 +132,7 @@ class AttendanceTableModel(QAbstractTableModel):
                 return record.note or ""
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            if col in [self.TIME_IN_COL, self.TIME_OUT_COL, self.TARDINESS_COL, 
+            if col in [self.TIME_IN_COL, self.TIME_OUT_COL, self.TARDINESS_COL,
                        self.MAIN_WORK_COL, self.OVERTIME_COL, self.LAUNCH_TIME_COL, self.TOTAL_DURATION_COL]:
                 return Qt.AlignmentFlag.AlignCenter
 
@@ -181,11 +186,11 @@ class AttendanceTableModel(QAbstractTableModel):
 
     def refresh(self):
         self.load_data()
-        
+
     def set_filters(self, **kwargs):
         self.filters = kwargs
         self.refresh()
-        
+
     def get_aggregates(self):
         """Calculate aggregate values for the current dataset."""
         aggregates = {
@@ -202,7 +207,7 @@ class AttendanceTableModel(QAbstractTableModel):
             elif record.status == attendance_service.STATUS_ABSENT:
                 aggregates["absent_days"] += 1
         return aggregates
-        
+
     def add_attendance_record(self, record_data: dict):
         """Adds a new record via the service and refreshes the model."""
         try:
