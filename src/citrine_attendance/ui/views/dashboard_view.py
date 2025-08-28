@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QFont
 import jdatetime
+import datetime
 
 from ...services.employee_service import employee_service
 from ...services.attendance_service import attendance_service
@@ -148,11 +149,9 @@ class DashboardView(QWidget):
         btn_layout = QHBoxLayout()
         self.clockin_btn = QPushButton(_("dashboard_clock_in"))
         self.clockin_btn.setStyleSheet(self.get_button_style("#11563a")) # Brand color
-        # self.clockin_btn.clicked.connect(self.on_clockin_clicked) # Connect later
 
         self.clockout_btn = QPushButton(_("dashboard_clock_out"))
         self.clockout_btn.setStyleSheet(self.get_button_style("#ffa500")) # Secondary color
-        # self.clockout_btn.clicked.connect(self.on_clockout_clicked) # Connect later
 
         btn_layout.addWidget(self.clockin_btn)
         btn_layout.addWidget(self.clockout_btn)
@@ -183,25 +182,19 @@ class DashboardView(QWidget):
 
     def darken_color(self, color_hex):
         """Simple function to darken a hex color for hover effects."""
-        # Remove # if present
         color_hex = color_hex.lstrip('#')
-        # Convert to RGB
         rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
-        # Darken by 10%
         darker_rgb = tuple(max(0, int(c * 0.9)) for c in rgb)
-        # Convert back to hex
         return f"#{darker_rgb[0]:02x}{darker_rgb[1]:02x}{darker_rgb[2]:02x}"
 
     def refresh_data(self):
         """Refresh dashboard data like KPIs and employee list."""
         try:
-            # Get a DB session
-            # Using the generator approach from services
             session_gen = get_db_session()
             self.db_session = next(session_gen)
 
             # --- Refresh KPIs ---
-            today = QDate.currentDate().toPyDate() # Get Python date
+            today = QDate.currentDate().toPyDate()
             summary = attendance_service.get_daily_summary(today, db=self.db_session)
 
             self.kpi_present_value.setText(str(summary['present']))
@@ -209,23 +202,17 @@ class DashboardView(QWidget):
             self.logger.debug(f"Dashboard KPIs refreshed for {today}: {summary}")
 
             # --- Refresh Employee Combo Box ---
-            # Clear existing items
             self.employee_combo.clear()
-            # Add a placeholder item
             self.employee_combo.addItem("--- Select an Employee ---", None)
-            # Get employees
             employees = employee_service.get_all_employees(db=self.db_session)
             for emp in employees:
-                # Display name, store ID
                 display_name = f"{emp.first_name} {emp.last_name}".strip() or emp.email
                 self.employee_combo.addItem(display_name, emp.id)
             self.logger.debug(f"Employee combo box refreshed with {len(employees)} employees.")
 
         except Exception as e:
             self.logger.error(f"Error refreshing dashboard data: {e}", exc_info=True)
-            # TODO: Show error message in UI
         finally:
-            # Close the session if it was opened
             if self.db_session:
                 self.db_session.close()
                 self.db_session = None
@@ -236,81 +223,34 @@ class DashboardView(QWidget):
         if not emp_id:
             QMessageBox.warning(self, _("dashboard_no_employee_selected"), _("dashboard_please_select_employee"))
             return
-        
-        action_name = "Unknown Action" # Default value
-        if action_type == "in":
-            action_name = "Clock-In"
-        elif action_type == "out":
-            action_name = "Clock-Out"
+
+        action_name = "Clock-In" if action_type == "in" else "Clock-Out"
 
         try:
+            record = None
             if action_type == "in":
                 record = attendance_service.clock_in(emp_id)
-                # action_name is already set above
             elif action_type == "out":
                 record = attendance_service.clock_out(emp_id)
-                # action_name is already set above
             else:
                 self.logger.warning(f"Unknown action type '{action_type}' requested.")
-                return # Should not happen with current setup
+                return
+
+            # Determine the relevant timestamp for the success message
+            timestamp = record.time_out if action_type == "out" and record.time_out else record.time_in
 
             QMessageBox.information(
                 self,
                 _("dashboard_success"),
-                _("dashboard_action_recorded", action=action_name, employee=self.employee_combo.currentText(), date=record.date.strftime('%Y-%m-%d'), time=record.updated_at.strftime('%H:%M:%S'))
+                _("dashboard_action_recorded",
+                  action=action_name,
+                  employee=self.employee_combo.currentText(),
+                  date=record.date.strftime('%Y-%m-%d'),
+                  time=timestamp.strftime('%H:%M:%S'))
             )
             self.logger.info(f"{action_name} successful for Employee ID {emp_id}.")
-            # Refresh KPIs to reflect the change
             self.refresh_data()
 
         except Exception as e:
             self.logger.error(f"Error during {action_name} for Employee ID {emp_id}: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to record {action_name.lower()}: {e}")
-
-
-
-    # --- Placeholder methods for actions ---
-    # def on_clockin_clicked(self):
-    #     emp_id = self.employee_combo.currentData()
-    #     if emp_id:
-    #         try:
-    #             record = attendance_service.clock_in(emp_id)
-    #             # Show success message
-    #             # Refresh KPIs
-    #             self.refresh_data()
-    #         except Exception as e:
-    #             # Show error
-    #             pass
-    #     else:
-    #         # Show warning to select employee
-    #         pass
-
-    # def on_clockout_clicked(self):
-    #     emp_id = self.employee_combo.currentData()
-    #     if emp_id:
-    #         try:
-    #             record = attendance_service.clock_out(emp_id)
-    #             # Show success message
-    #             # Refresh KPIs
-    #             self.refresh_data()
-    #         except Exception as e:
-    #             # Show error
-    #             pass
-    #     else:
-    #         # Show warning to select employee
-    #         pass
-
-# Example usage (if run directly)
-# if __name__ == '__main__':
-#     from PyQt6.QtWidgets import QApplication, QMainWindow
-#     import sys
-#     from ...database import init_db, User
-#     init_db()
-#     app = QApplication(sys.argv)
-#     # Mock user
-#     user = User(username="testuser", role="admin")
-#     window = QMainWindow()
-#     dashboard = DashboardView(user)
-#     window.setCentralWidget(dashboard)
-#     window.show()
-#     sys.exit(app.exec())

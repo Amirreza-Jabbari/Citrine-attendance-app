@@ -40,6 +40,66 @@ class AttendanceService:
         session_gen = get_db_session()
         return next(session_gen)
 
+    def clock_in(self, employee_id: int, db: Optional[Session] = None) -> Attendance:
+        """Handles the logic for an employee clocking in."""
+        managed = db is None
+        db = db or self._get_session()
+        try:
+            today = datetime.date.today()
+            now_time = datetime.datetime.now().time()
+
+            record = db.query(Attendance).filter(
+                and_(Attendance.employee_id == employee_id, Attendance.date == today)
+            ).first()
+
+            if record:
+                if record.time_in:
+                    raise AttendanceServiceError(f"Employee {employee_id} has already clocked in today.")
+                record.time_in = now_time
+            else:
+                record = Attendance(
+                    employee_id=employee_id,
+                    date=today,
+                    time_in=now_time,
+                )
+                db.add(record)
+
+            self._calculate_all_fields(record)
+            db.commit()
+            db.refresh(record)
+            return record
+        except Exception as e:
+            db.rollback()
+            raise AttendanceServiceError(f"Failed to clock in: {e}") from e
+        finally:
+            if managed: db.close()
+
+    def clock_out(self, employee_id: int, db: Optional[Session] = None) -> Attendance:
+        """Handles the logic for an employee clocking out."""
+        managed = db is None
+        db = db or self._get_session()
+        try:
+            today = datetime.date.today()
+            now_time = datetime.datetime.now().time()
+
+            record = db.query(Attendance).filter(
+                and_(Attendance.employee_id == employee_id, Attendance.date == today)
+            ).first()
+
+            if not record or not record.time_in:
+                raise AttendanceServiceError(f"Employee {employee_id} has not clocked in today.")
+
+            record.time_out = now_time
+            self._calculate_all_fields(record)
+            db.commit()
+            db.refresh(record)
+            return record
+        except Exception as e:
+            db.rollback()
+            raise AttendanceServiceError(f"Failed to clock out: {e}") from e
+        finally:
+            if managed: db.close()
+
     def _calculate_all_fields(self, record: Attendance):
         """
         Calculates all derived time fields for an attendance record.
@@ -52,10 +112,8 @@ class AttendanceService:
         record.status = self.STATUS_ABSENT
 
         if not (record.time_in and record.time_out and record.time_out > record.time_in):
-            # If there's no valid time in/out, we can't calculate anything.
-            # Set status based on whether there's at least a time_in.
             if record.time_in:
-                record.status = self.STATUS_PRESENT # Considered present if clocked in
+                record.status = self.STATUS_PRESENT
             return
 
         dt_in = datetime.datetime.combine(record.date, record.time_in)
@@ -66,7 +124,6 @@ class AttendanceService:
         record.status = self.STATUS_PRESENT
 
         launch_minutes = 0
-        # --- CORRECTED: Use record.launch_start and record.launch_end ---
         if record.launch_start and record.launch_end and record.launch_end > record.launch_start:
             launch_dt_start = datetime.datetime.combine(record.date, record.launch_start)
             launch_dt_end = datetime.datetime.combine(record.date, record.launch_end)
@@ -123,7 +180,6 @@ class AttendanceService:
             for key, value in kwargs.items():
                 if hasattr(record, key): setattr(record, key, value)
             
-            # Explicitly handle time fields to ensure recalculation
             if 'time_in' in kwargs: record.time_in = kwargs['time_in']
             if 'time_out' in kwargs: record.time_out = kwargs['time_out']
             if 'launch_start' in kwargs: record.launch_start = kwargs['launch_start']
@@ -170,9 +226,19 @@ class AttendanceService:
         managed = db is None
         db = db or self._get_session()
         try:
-            present = db.query(Attendance).filter(and_(Attendance.date == target_date, Attendance.status == self.STATUS_PRESENT)).count()
-            absent = db.query(Attendance).filter(and_(Attendance.date == target_date, Attendance.status == self.STATUS_ABSENT)).count()
-            return {"present": present, "absent": absent}
+            # Get all employees
+            total_employees = db.query(Employee).count()
+            
+            # Get employees present on the target date
+            present_count = db.query(Attendance).filter(
+                and_(
+                    Attendance.date == target_date,
+                    Attendance.status == self.STATUS_PRESENT
+                )
+            ).count()
+
+            absent_count = total_employees - present_count
+            return {"present": present_count, "absent": max(0, absent_count)} # Ensure absent is not negative
         finally:
             if managed: db.close()
 
@@ -187,13 +253,12 @@ class AttendanceService:
                 "Tardiness (min)": r.tardiness_minutes, "Main Work (min)": r.main_work_minutes,
                 "Overtime (min)": r.overtime_minutes, "Launch Time (min)": r.launch_duration_minutes,
                 "Total Duration (min)": r.duration_minutes,
-                # CHANGE THIS LINE: Return the raw status key instead of the display string
                 "Status": r.status,
                 "Note": r.note or "",
             } for r in records]
         finally:
             if needs_closing: db.close()
-                
+            
     def get_archived_attendance_records(self, db: Optional[Session] = None, **filters) -> List[Attendance]:
         managed = db is None
         db = db or self._get_session()
