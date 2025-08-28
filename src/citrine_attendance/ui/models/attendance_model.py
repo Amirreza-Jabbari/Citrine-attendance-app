@@ -122,7 +122,9 @@ class AttendanceTableModel(QAbstractTableModel):
                 return minutes_to_hhmm(record.main_work_minutes)
             elif col == self.OVERTIME_COL:
                 return minutes_to_hhmm(record.overtime_minutes)
+            # --- CORRECTED: Use the correct column name from the database model ---
             elif col == self.LAUNCH_TIME_COL:
+                # The database now stores launch_duration_minutes, so we use that
                 return minutes_to_hhmm(record.launch_duration_minutes)
             elif col == self.TOTAL_DURATION_COL:
                 return minutes_to_hhmm(record.duration_minutes)
@@ -135,6 +137,12 @@ class AttendanceTableModel(QAbstractTableModel):
             if col in [self.TIME_IN_COL, self.TIME_OUT_COL, self.TARDINESS_COL,
                        self.MAIN_WORK_COL, self.OVERTIME_COL, self.LAUNCH_TIME_COL, self.TOTAL_DURATION_COL]:
                 return Qt.AlignmentFlag.AlignCenter
+        
+        elif role == Qt.ItemDataRole.ToolTipRole:
+            if col == self.LAUNCH_TIME_COL:
+                start = record.launch_start.strftime('%H:%M') if record.launch_start else "N/A"
+                end = record.launch_end.strftime('%H:%M') if record.launch_end else "N/A"
+                return f"Launch: {start} - {end}"
 
         return QVariant()
 

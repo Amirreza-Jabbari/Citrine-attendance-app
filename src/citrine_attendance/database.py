@@ -1,8 +1,8 @@
 # src/citrine_attendance/database.py
 import logging
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date, Time, Boolean, ForeignKey, Index, event, inspect
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date, Time, Boolean, ForeignKey, Index, event, inspect, text
 from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.ext.declarative import declarative_base
 import datetime
 from .config import config # Import our config to get the DB path
 
@@ -34,10 +34,11 @@ class Attendance(Base):
     date = Column(Date, nullable=False) # Stored as ISO Gregorian YYYY-MM-DD
     time_in = Column(Time, nullable=True)
     time_out = Column(Time, nullable=True)
-    
-    # --- New Launch Time Fields ---
-    launch_start_time = Column(Time, nullable=True)
-    launch_end_time = Column(Time, nullable=True)
+
+    # --- CORRECTED Launch Time Fields ---
+    # Renamed to match the keyword arguments from the dialog
+    launch_start = Column(Time, nullable=True)
+    launch_end = Column(Time, nullable=True)
 
     # --- Derived/Calculated Fields ---
     duration_minutes = Column(Integer, nullable=True) # Total duration in minutes
@@ -53,7 +54,7 @@ class Attendance(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     
-    is_archived = Column(Boolean, default=False, nullable=False) 
+    is_archived = Column(Boolean, default=False, nullable=False)
 
     # Relationship
     employee = relationship("Employee", back_populates="attendance_records")
@@ -129,16 +130,16 @@ def init_db():
             inspector = inspect(engine)
             attendance_columns = [column['name'] for column in inspector.get_columns('attendance')]
             
+            # UPDATED with corrected column names
             new_columns = {
-                "launch_start_time": "ALTER TABLE attendance ADD COLUMN launch_start_time TIME",
-                "launch_end_time": "ALTER TABLE attendance ADD COLUMN launch_end_time TIME",
+                "launch_start": "ALTER TABLE attendance ADD COLUMN launch_start TIME",
+                "launch_end": "ALTER TABLE attendance ADD COLUMN launch_end TIME",
                 "launch_duration_minutes": "ALTER TABLE attendance ADD COLUMN launch_duration_minutes INTEGER",
                 "tardiness_minutes": "ALTER TABLE attendance ADD COLUMN tardiness_minutes INTEGER",
                 "main_work_minutes": "ALTER TABLE attendance ADD COLUMN main_work_minutes INTEGER",
                 "overtime_minutes": "ALTER TABLE attendance ADD COLUMN overtime_minutes INTEGER"
             }
             
-            from sqlalchemy import text
             with engine.connect() as connection:
                 for col_name, alter_sql in new_columns.items():
                     if col_name not in attendance_columns:
@@ -149,7 +150,8 @@ def init_db():
                             trans.commit()
                             logging.info(f"Successfully added '{col_name}' column to 'attendance' table.")
                         except Exception as e:
-                            trans.rollback()
+                            if trans:
+                                trans.rollback()
                             logging.critical(f"Failed to add '{col_name}' column during migration: {e}")
                             raise RuntimeError(f"Failed to migrate database for column {col_name}") from e
 

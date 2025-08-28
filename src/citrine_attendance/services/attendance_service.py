@@ -52,6 +52,10 @@ class AttendanceService:
         record.status = self.STATUS_ABSENT
 
         if not (record.time_in and record.time_out and record.time_out > record.time_in):
+            # If there's no valid time in/out, we can't calculate anything.
+            # Set status based on whether there's at least a time_in.
+            if record.time_in:
+                record.status = self.STATUS_PRESENT # Considered present if clocked in
             return
 
         dt_in = datetime.datetime.combine(record.date, record.time_in)
@@ -62,9 +66,10 @@ class AttendanceService:
         record.status = self.STATUS_PRESENT
 
         launch_minutes = 0
-        if record.launch_start_time and record.launch_end_time and record.launch_end_time > record.launch_start_time:
-            launch_dt_start = datetime.datetime.combine(record.date, record.launch_start_time)
-            launch_dt_end = datetime.datetime.combine(record.date, record.launch_end_time)
+        # --- CORRECTED: Use record.launch_start and record.launch_end ---
+        if record.launch_start and record.launch_end and record.launch_end > record.launch_start:
+            launch_dt_start = datetime.datetime.combine(record.date, record.launch_start)
+            launch_dt_end = datetime.datetime.combine(record.date, record.launch_end)
             launch_minutes = int((launch_dt_end - launch_dt_start).total_seconds() / 60)
         elif total_duration_minutes > (config.settings.get("workday_hours", 8) * 60) / 2:
             launch_minutes = config.settings.get("default_launch_time_minutes", 60)
@@ -78,17 +83,17 @@ class AttendanceService:
             late_threshold_dt = dt_in.replace(hour=hour, minute=minute, second=0, microsecond=0)
         except ValueError:
             late_threshold_dt = dt_in.replace(hour=10, minute=0, second=0, microsecond=0)
-        
+
         record.tardiness_minutes = max(0, int((dt_in - late_threshold_dt).total_seconds() / 60))
 
         workday_minutes = config.settings.get("workday_hours", 8) * 60
         official_end_dt = dt_in + datetime.timedelta(minutes=(workday_minutes + launch_minutes))
-        
+
         overtime_minutes = 0
         if dt_out > official_end_dt:
             overtime_minutes = int((dt_out - official_end_dt).total_seconds() / 60)
         record.overtime_minutes = overtime_minutes
-        
+
         record.main_work_minutes = max(0, net_work_minutes - overtime_minutes)
 
     def add_manual_attendance(self, db: Optional[Session] = None, **kwargs) -> Attendance:
@@ -117,8 +122,13 @@ class AttendanceService:
             if not record: raise AttendanceNotFoundError("Record not found.")
             for key, value in kwargs.items():
                 if hasattr(record, key): setattr(record, key, value)
+            
+            # Explicitly handle time fields to ensure recalculation
             if 'time_in' in kwargs: record.time_in = kwargs['time_in']
             if 'time_out' in kwargs: record.time_out = kwargs['time_out']
+            if 'launch_start' in kwargs: record.launch_start = kwargs['launch_start']
+            if 'launch_end' in kwargs: record.launch_end = kwargs['launch_end']
+
             self._calculate_all_fields(record)
             db.commit()
             db.refresh(record)
@@ -176,7 +186,9 @@ class AttendanceService:
                 "Date": r.date, "Time In": r.time_in, "Time Out": r.time_out,
                 "Tardiness (min)": r.tardiness_minutes, "Main Work (min)": r.main_work_minutes,
                 "Overtime (min)": r.overtime_minutes, "Launch Time (min)": r.launch_duration_minutes,
-                "Total Duration (min)": r.duration_minutes, "Status": self.STATUS_DISPLAY.get(r.status, r.status),
+                "Total Duration (min)": r.duration_minutes,
+                # CHANGE THIS LINE: Return the raw status key instead of the display string
+                "Status": r.status,
                 "Note": r.note or "",
             } for r in records]
         finally:

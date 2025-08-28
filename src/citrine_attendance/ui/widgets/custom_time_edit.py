@@ -1,55 +1,67 @@
 # src/citrine_attendance/ui/widgets/custom_time_edit.py
-"""A custom QTimeEdit that accepts 4-digit time input."""
-from PyQt6.QtWidgets import QTimeEdit, QLineEdit
+"""A custom QTimeEdit-like widget with a clear button, using a masked QLineEdit."""
+
+from PyQt6.QtWidgets import QLineEdit, QPushButton, QHBoxLayout, QWidget
 from PyQt6.QtCore import QTime, Qt
-from PyQt6.QtGui import QKeyEvent
 
-
-class CustomTimeEdit(QTimeEdit):
+class CustomTimeEdit(QWidget):
     """
-    A QTimeEdit that allows entering time as a 4-digit string (e.g., '0930')
-    and automatically formats it to 'HH:mm'.
+    A custom time input widget that uses a masked QLineEdit to ensure
+    Left-to-Right display in all layout directions.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setDisplayFormat("HH:mm")
-        self.lineEdit().installEventFilter(self)
+        # Force the entire custom widget to LTR to ensure correct layout of its children
+        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        self.init_ui()
 
-    def eventFilter(self, obj, event):
-        """Filter key press events on the line edit."""
-        if obj is self.lineEdit() and isinstance(event, QKeyEvent):
-            if event.type() == QKeyEvent.Type.KeyPress:
-                # On Return/Enter, attempt to format the text
-                if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-                    self.format_text()
-                    return True # Event handled
-        # Pass the event to the base class
-        return super().eventFilter(obj, event)
+    def init_ui(self):
+        """Initializes the UI components of the custom widget."""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
-    def focusOutEvent(self, event):
-        """Format the text when the widget loses focus."""
-        self.format_text()
-        super().focusOutEvent(event)
+        # Use QLineEdit with an input mask. This is the key to fixing the RTL issue.
+        self.time_edit = QLineEdit()
+        self.time_edit.setInputMask("00:00")
+        self.time_edit.setPlaceholderText("HH:MM")
+        # Ensure text is aligned left within the QLineEdit
+        self.time_edit.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
-    def format_text(self):
+        # Clear button
+        self.clear_button = QPushButton("X")
+        self.clear_button.setFixedSize(20, 20)
+        self.clear_button.setFlat(True)
+        self.clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_button.setStyleSheet("font-weight: bold; border: none;")
+        self.clear_button.clicked.connect(self.clear)
+
+        layout.addWidget(self.time_edit)
+        layout.addWidget(self.clear_button)
+
+    def time(self) -> QTime:
         """
-        Parses the current text in the line edit and formats it as HH:mm.
+        Returns the current time from the QLineEdit as a QTime object.
+        Returns QTime(0,0) if the input is incomplete or invalid.
         """
-        line_edit = self.lineEdit()
-        text = line_edit.text()
+        try:
+            h, m = map(int, self.time_edit.text().split(':'))
+            if 0 <= h < 24 and 0 <= m < 60:
+                return QTime(h, m)
+        except (ValueError, IndexError):
+            pass # Return default if text is not a valid time
+        return QTime(0, 0)
 
-        # Remove any non-digit characters
-        digits = ''.join(filter(str.isdigit, text))
+    def setTime(self, time: QTime):
+        """
+        Sets the time in the QLineEdit from a QTime object.
+        If the time is null (0,0), it clears the line edit.
+        """
+        if time and time != QTime(0, 0):
+            self.time_edit.setText(time.toString("HH:mm"))
+        else:
+            self.clear()
 
-        if len(digits) == 4:
-            try:
-                hour = int(digits[0:2])
-                minute = int(digits[2:4])
-                
-                # Basic validation
-                if 0 <= hour <= 23 and 0 <= minute <= 59:
-                    self.setTime(QTime(hour, minute))
-            except (ValueError, IndexError):
-                # If parsing fails, do nothing or reset to a default
-                pass # Keep the invalid text for user correction
-        # If the input is not 4 digits, let the default QTimeEdit handling apply
+    def clear(self):
+        """Clears the time text."""
+        self.time_edit.clear()
