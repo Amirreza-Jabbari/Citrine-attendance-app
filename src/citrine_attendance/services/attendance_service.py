@@ -10,6 +10,8 @@ from ..config import config
 class AttendanceServiceError(Exception): pass
 class AttendanceNotFoundError(AttendanceServiceError): pass
 class AttendanceAlreadyExistsError(AttendanceServiceError): pass
+class AlreadyClockedInError(AttendanceServiceError): pass
+class NotClockedInError(AttendanceServiceError): pass
 
 class AttendanceService:
     STATUS_PRESENT = "present"
@@ -150,7 +152,37 @@ class AttendanceService:
             if filters.get('start_date'): query = query.filter(Attendance.date >= filters['start_date'])
             if filters.get('end_date'): query = query.filter(Attendance.date <= filters['end_date'])
             if filters.get('statuses'): query = query.filter(Attendance.status.in_(filters['statuses']))
+            # Assuming an 'is_archived' field exists in the Attendance model
+            query = query.filter(Attendance.is_archived == False)
             return query.order_by(Attendance.date.desc(), Employee.last_name).all()
+        finally:
+            if managed: db.close()
+
+    def get_archived_attendance_records(self, db: Optional[Session] = None, **filters) -> List[Attendance]:
+        managed = db is None
+        db = db or self._get_session()
+        try:
+            query = db.query(Attendance).join(Attendance.employee).options(joinedload(Attendance.employee))
+            if filters.get('employee_id'): query = query.filter(Attendance.employee_id == filters['employee_id'])
+            if filters.get('start_date'): query = query.filter(Attendance.date >= filters['start_date'])
+            if filters.get('end_date'): query = query.filter(Attendance.date <= filters['end_date'])
+            if filters.get('statuses'): query = query.filter(Attendance.status.in_(filters['statuses']))
+            # Assuming an 'is_archived' field exists in the Attendance model
+            query = query.filter(Attendance.is_archived == True)
+            return query.order_by(Attendance.date.desc(), Employee.last_name).all()
+        finally:
+            if managed: db.close()
+
+    def unarchive_records(self, record_ids: List[int], db: Optional[Session] = None) -> int:
+        managed = db is None
+        db = db or self._get_session()
+        try:
+            updated_count = db.query(Attendance).filter(Attendance.id.in_(record_ids)).update({"is_archived": False}, synchronize_session=False)
+            db.commit()
+            return updated_count
+        except Exception as e:
+            db.rollback()
+            raise AttendanceServiceError(f"Failed to unarchive records: {e}") from e
         finally:
             if managed: db.close()
     
@@ -173,5 +205,73 @@ class AttendanceService:
             } for r in records]
         finally:
             if needs_closing: db.close()
+
+    def clock_in(self, employee_id: int, db: Optional[Session] = None) -> Attendance:
+        managed = db is None
+        db = db or self._get_session()
+        try:
+            today = datetime.date.today()
+            now = datetime.datetime.now().time()
+            
+            record = db.query(Attendance).filter(and_(Attendance.employee_id == employee_id, Attendance.date == today)).first()
+            
+            if record and record.time_in and not record.time_out:
+                raise AlreadyClockedInError("Employee is already clocked in today.")
+
+            if record:
+                record.time_in = now
+            else:
+                record = Attendance(employee_id=employee_id, date=today, time_in=now)
+                db.add(record)
+            
+            self._calculate_all_fields(record)
+            db.commit()
+            db.refresh(record)
+            return record
+        except Exception as e:
+            db.rollback()
+            raise AttendanceServiceError(f"Failed to clock in: {e}") from e
+        finally:
+            if managed: db.close()
+
+    def clock_out(self, employee_id: int, db: Optional[Session] = None) -> Attendance:
+        managed = db is None
+        db = db or self._get_session()
+        try:
+            today = datetime.date.today()
+            now = datetime.datetime.now().time()
+            
+            record = db.query(Attendance).filter(and_(Attendance.employee_id == employee_id, Attendance.date == today)).first()
+            
+            if not record or not record.time_in:
+                raise NotClockedInError("Employee is not clocked in today.")
+            
+            if record.time_out:
+                raise AttendanceServiceError("Employee has already clocked out today.")
+
+            record.time_out = now
+            self._calculate_all_fields(record)
+            db.commit()
+            db.refresh(record)
+            return record
+        except Exception as e:
+            db.rollback()
+            raise AttendanceServiceError(f"Failed to clock out: {e}") from e
+        finally:
+            if managed: db.close()
+
+    def get_daily_summary(self, date: datetime.date, db: Optional[Session] = None) -> Dict[str, int]:
+        managed = db is None
+        db = db or self._get_session()
+        try:
+            present_count = db.query(Attendance).filter(and_(Attendance.date == date, Attendance.status == self.STATUS_PRESENT)).count()
+            
+            # Absent is total employees minus present
+            total_employees = db.query(Employee).count()
+            absent_count = total_employees - present_count
+            
+            return {"present": present_count, "absent": absent_count}
+        finally:
+            if managed: db.close()
 
 attendance_service = AttendanceService()

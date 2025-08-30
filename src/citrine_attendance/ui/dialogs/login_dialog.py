@@ -137,7 +137,8 @@ class LoginDialog(QDialog):
         try:
             self.toggle_password_action = QAction(self)
             self.toggle_password_action.setIcon(QIcon(str(get_icon_path("eye-off.svg"))))
-            self.toggle_password_action.setCursor(Qt.CursorShape.PointingHandCursor)
+            # The following line was causing the error and has been removed.
+            # self.toggle_password_action.setCursor(Qt.CursorShape.PointingHandCursor)
             self.toggle_password_action.triggered.connect(self.toggle_password_visibility)
             
             action_position = QLineEdit.ActionPosition.TrailingPosition
