@@ -143,4 +143,4 @@ class AddEmployeeDialog(QDialog):
 #     dialog = AddEmployeeDialog()
 #     # For testing, just show it
 #     dialog.exec()
-#     sys.exit(app.exec())  
+#     sys.exit(app.exec())

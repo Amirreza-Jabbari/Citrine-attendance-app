@@ -65,10 +65,10 @@ class AttendanceDialogBase(QDialog):
 
         # --- Leave Time Fields ---
         self.leave_start_edit = CustomTimeEdit()
-        form_layout.addRow(_("attendance_leave_start"), self.leave_start_edit)
+        form_layout.addRow(_("hourly_leave_start"), self.leave_start_edit)
 
         self.leave_end_edit = CustomTimeEdit()
-        form_layout.addRow(_("attendance_leave_end"), self.leave_end_edit)
+        form_layout.addRow(_("hourly_leave_end"), self.leave_end_edit)
         
         self.note_edit = QTextEdit()
         form_layout.addRow(_("attendance_add_dialog_note"), self.note_edit)

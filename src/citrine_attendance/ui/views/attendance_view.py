@@ -58,7 +58,11 @@ class AttendanceView(QWidget):
         self.attendance_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.attendance_table.setSortingEnabled(False)
         self.attendance_table.setModel(self.attendance_model)
-        # Disable inline editing; use double-click dialog instead
+        # TODO: To display hourly leave, you need to update AttendanceTableModel
+        # to include columns for 'Leave Start' and 'Leave End'.
+        # For example, in your model's __init__ or a setup method:
+        # self.headers = [..., _("hourly_leave_start"), _("hourly_leave_end")]
+        # And in the data() method, return the corresponding data for these columns.
         self.attendance_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.attendance_table.doubleClicked.connect(self.open_edit_record_dialog)
         self.attendance_table.horizontalHeader().setStretchLastSection(True)
@@ -323,4 +327,3 @@ class AttendanceView(QWidget):
 
         text = "\n".join(["\t".join(map(str, row)) for row in table_data])
         QApplication.clipboard().setText(text)
-
