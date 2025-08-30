@@ -1,24 +1,20 @@
 # src/citrine_attendance/ui/main_window.py
-"""Main application window."""
+"""Main application window with a modern UI."""
 import sys
 import logging
-from datetime import timedelta # Import timedelta for backup interval calculation
-from pathlib import Path
+from datetime import timedelta
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QStackedWidget, QToolBar, QStatusBar,
-    QMessageBox, QSizePolicy, QFrame, QDialog
+    QPushButton, QLabel, QStackedWidget, QStatusBar, QMessageBox,
+    QSizePolicy, QFrame, QDialog
 )
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFontDatabase, QIcon, QFont
+from PyQt6.QtCore import Qt, QTimer, QSize
+from PyQt6.QtGui import QFontDatabase, QIcon
 
 from ..config import config
 from ..utils.resources import get_font_path, get_icon_path
-# Import the Login Dialog
 from .dialogs.login_dialog import LoginDialog
-# Import User model for role checks (if needed locally, though service can handle it)
 from ..database import User
-# Import Views
 from .views.dashboard_view import DashboardView
 from .views.employee_view import EmployeeView
 from .views.attendance_view import AttendanceView
@@ -26,276 +22,164 @@ from .views.backups_view import BackupsView
 from .views.reports_view import ReportsView
 from .views.archive_view import ArchiveView
 from .views.settings_view import SettingsView
-
-# --- Import Backup Service for automatic backups ---
 from ..services.backup_service import backup_service, BackupServiceError
 from ..locale import _
 
-
 class MainWindow(QMainWindow):
-    """Main application window."""
+    """Main application window with a modern, consistent UI."""
 
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger(__name__)
         self.current_user = None
-
-        # --- Attributes for automatic backup ---
         self.backup_timer = None
-        self.last_backup_check_time = None # Optional: track when we last checked/scheduled
+        self.nav_buttons = []
 
-        # --- Initial UI Setup (Before Login) ---
         self.setWindowTitle(_("app_title"))
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1280, 800)
+        self.setWindowIcon(QIcon(str(get_icon_path("icon.ico"))))
 
-        # Placeholder widget shown before login
+        # Initial placeholder before login
         self.placeholder_widget = QLabel(_("status_initializing"))
         self.placeholder_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Apply base styling for the placeholder
+        self.setStyleSheet("background-color: #2c3e50; font-family: Vazir, Segoe UI, Arial, sans-serif;")
+        self.placeholder_widget.setStyleSheet("font-size: 20px; color: #bdc3c7;")
         self.setCentralWidget(self.placeholder_widget)
-        # Initially hide the main window, only show the login dialog
+        
         self.hide()
 
-        # Status Bar
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage(_("status_initializing"))
-
-        # Load resources
         self.load_resources()
-
-        # Start the login process *after* the main window object is fully constructed
         QTimer.singleShot(0, self.show_login_and_ui)
 
     def show_login_and_ui(self):
-        """Orchestrate the login and subsequent UI setup."""
-        self.show_login()
-        # init_main_ui is now called from on_login_successful
-
-    def show_login(self):
-        """Show the login dialog."""
-        QApplication.processEvents()
-        self.login_dialog = LoginDialog(self)
-        self.login_dialog.login_successful.connect(self.on_login_successful)
-        login_result = self.login_dialog.exec()
-
-        if login_result != QDialog.DialogCode.Accepted:
-            self.logger.info("Login dialog closed or cancelled. Exiting application.")
+        """Orchestrates the login flow and subsequent UI initialization."""
+        if self.show_login():
+            self.init_main_ui()
+            self.update_ui_for_user_role()
+            self.connect_signals()
+            self.setup_automatic_backup()
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        else:
             QApplication.instance().quit()
 
+    def show_login(self) -> bool:
+        """Shows the login dialog and returns True on success."""
+        login_dialog = LoginDialog(self)
+        login_dialog.login_successful.connect(self.on_login_successful)
+        result = login_dialog.exec()
+        return result == QDialog.DialogCode.Accepted
+
     def on_login_successful(self, user: User):
-        """Slot called when user successfully logs in."""
+        """Handles successful login."""
         self.current_user = user
         self.logger.info(f"Main window updated for user: {user.username} (Role: {user.role})")
-        # Now initialize the full UI that requires a logged-in user
-        self.init_main_ui()
-        # Update UI elements based on user role
-        self.update_ui_for_user_role()
-        # Connect signals between views
-        self.connect_signals()
-        # --- Setup automatic backups after login ---
-        self.setup_automatic_backup()
-        # Now that UI is set up, show the main window
-        self.show()
-        self.raise_()
-        self.activateWindow()
-
-    # --- Automatic Backup Logic ---
-    def setup_automatic_backup(self):
-        """Setup the automatic backup timer based on configuration."""
-        # Ensure the user is logged in and is an admin
-        if not self.current_user or self.current_user.role != "admin":
-            self.logger.debug("Not setting up auto-backup: User is not an admin or not logged in.")
-            return
-
-        try:
-            # Get backup frequency from config (default to 1 day)
-            frequency_days = config.settings.get("backup_frequency_days", 1)
-            
-            # If frequency is 0 or negative, backups are disabled
-            if frequency_days <= 0:
-                self.logger.info("Automatic backup is disabled (frequency <= 0).")
-                # Stop timer if it was running
-                if self.backup_timer and self.backup_timer.isActive():
-                    self.backup_timer.stop()
-                    self.logger.debug("Stopped existing backup timer as backups are disabled.")
-                return
-
-            # Calculate interval in milliseconds
-            interval_ms = int(timedelta(days=frequency_days).total_seconds() * 1000)
-            
-            # Enforce a minimum interval for safety (e.g., 1 minute)
-            MIN_INTERVAL_MS = 60 * 1000 # 1 minute
-            interval_ms = max(interval_ms, MIN_INTERVAL_MS)
-
-            # Stop existing timer if any
-            if self.backup_timer and self.backup_timer.isActive():
-                self.backup_timer.stop()
-                self.logger.debug("Stopped existing backup timer.")
-
-            # Create and configure the new timer
-            self.backup_timer = QTimer(self)
-            self.backup_timer.timeout.connect(self.perform_scheduled_backup)
-            
-            # Start the timer with the calculated interval
-            self.backup_timer.start(interval_ms)
-            
-            self.logger.info(f"Automatic backup scheduled every {frequency_days} day(s) ({interval_ms} ms).")
-            self.status_bar.showMessage(f"Automatic backup scheduled.", 5000) # Show for 5 seconds
-
-        except Exception as e:
-            self.logger.error(f"Failed to setup automatic backup timer: {e}", exc_info=True)
-            self.status_bar.showMessage("Error setting up auto-backup.", 5000)
-
-    def perform_scheduled_backup(self):
-        """Slot called by the backup timer to perform a scheduled backup."""
-        # Safety check: Ensure user is still admin
-        if not self.current_user or self.current_user.role != "admin":
-            self.logger.warning("Skipping scheduled backup: User is not an admin.")
-            return
-
-        try:
-            # Trigger the backup creation via the service
-            backup_path = backup_service.create_backup(manual=False)
-            self.logger.info(f"Scheduled backup created successfully: {backup_path}")
-            # Optional: Brief status bar update
-            # self.status_bar.showMessage(f"Backup created: {backup_path.name}", 3000)
-
-        except BackupServiceError as e:
-            self.logger.error(f"Scheduled backup failed (service error): {e}")
-            self.status_bar.showMessage("Scheduled backup failed. Check logs.", 5000)
-            # Consider non-modal warning to user if critical
-            # QMessageBox.warning(self, "Backup Failed", f"Automatic backup failed: {e}")
-        except Exception as e:
-            self.logger.error(f"Scheduled backup failed (unexpected error): {e}", exc_info=True)
-            self.status_bar.showMessage("Scheduled backup failed unexpectedly. Check logs.", 5000)
-            # QMessageBox.critical(self, "Backup Error", f"Unexpected error during backup: {e}")
 
     def init_main_ui(self):
-        """Initialize the main application UI after successful login."""
-        self.logger.debug("Initializing main UI components...")
-        # Remove placeholder and create the actual central widget
-        self.takeCentralWidget()
+        """Initializes the main application UI after a successful login."""
+        self.logger.debug("Initializing modern main UI components...")
+        
+        self.apply_stylesheet()
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_h_layout = QHBoxLayout(central_widget)
         main_h_layout.setContentsMargins(0, 0, 0, 0)
         main_h_layout.setSpacing(0)
 
-        # --- Sidebar ---
         self.create_sidebar()
         main_h_layout.addWidget(self.sidebar)
 
-        # --- Content Area (Stacked Widget) ---
         self.stacked_widget = QStackedWidget()
+        self.stacked_widget.setObjectName("contentArea")
         self.create_main_views()
         main_h_layout.addWidget(self.stacked_widget)
+        
+        self.status_bar = QStatusBar()
+        self.status_bar.setObjectName("statusBar")
+        self.setStatusBar(self.status_bar)
 
-        # Set Dashboard as the initial view
-        self.switch_view(0)
-        self.status_bar.showMessage(_("status_ready"))
-        self.logger.debug("Main UI components initialized.")
+        self.switch_view(0) # Default to dashboard
+        self.logger.debug("Modern main UI initialized.")
 
     def create_sidebar(self):
-        """Create the sidebar navigation."""
-        self.sidebar = QFrame()
+        """Creates the modern sidebar navigation with icons."""
+        self.sidebar = QWidget()
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setFrameShape(QFrame.Shape.StyledPanel)
+        self.sidebar.setFixedWidth(220)
+        
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.sidebar.setMaximumWidth(200)
-        self.sidebar.setMinimumWidth(150)
-        self.sidebar.setStyleSheet("""
-            #sidebar {
-                background-color: #f5f5f5;
-                border-right: 1px solid #ddd;
-            }
-            QPushButton {
-                text-align: left;
-                padding: 10px;
-                border: none;
-                border-radius: 4px;
-                background-color: transparent;
-                margin: 2px 5px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #bdbdbd;
-            }
-        """)
+        sidebar_layout.setContentsMargins(10, 15, 10, 10)
+        sidebar_layout.setSpacing(5)
+        
+        title_label = QLabel("Citrine")
+        title_label.setObjectName("sidebarTitle")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sidebar_layout.addWidget(title_label)
+        sidebar_layout.addSpacing(20)
 
-        # --- Navigation Buttons ---
-        self.btn_dashboard = QPushButton(_("view_dashboard"))
-        self.btn_dashboard.setObjectName("btnDashboard")
-        self.btn_dashboard.clicked.connect(lambda: self.switch_view(0))
-        sidebar_layout.addWidget(self.btn_dashboard)
+        # Navigation Buttons
+        self.btn_dashboard = self.create_nav_button(_("view_dashboard"), "grid.svg", 0)
+        self.btn_employees = self.create_nav_button(_("view_employees"), "users.svg", 1)
+        self.btn_attendance = self.create_nav_button(_("view_attendance"), "clock.svg", 2)
+        self.btn_reports = self.create_nav_button(_("view_reports"), "bar-chart-2.svg", 3)
+        self.btn_backups = self.create_nav_button(_("view_backups"), "database.svg", 4)
+        self.btn_archive = self.create_nav_button(_("view_archive"), "archive.svg", 5)
+        self.btn_settings = self.create_nav_button(_("view_settings"), "settings.svg", 6)
 
-        self.btn_employees = QPushButton(_("view_employees"))
-        self.btn_employees.setObjectName("btnEmployees")
-        self.btn_employees.clicked.connect(lambda: self.switch_view(1))
-        sidebar_layout.addWidget(self.btn_employees)
+        self.nav_buttons = [
+            self.btn_dashboard, self.btn_employees, self.btn_attendance,
+            self.btn_reports, self.btn_backups, self.btn_archive, self.btn_settings
+        ]
+        for btn in self.nav_buttons:
+            sidebar_layout.addWidget(btn)
 
-        self.btn_attendance = QPushButton(_("view_attendance"))
-        self.btn_attendance.setObjectName("btnAttendance")
-        self.btn_attendance.clicked.connect(lambda: self.switch_view(2))
-        sidebar_layout.addWidget(self.btn_attendance)
+        sidebar_layout.addStretch()
 
-        # Spacer
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        sidebar_layout.addWidget(spacer)
+        # User Info Panel
+        user_frame = QFrame()
+        user_frame.setObjectName("userFrame")
+        user_frame_layout = QVBoxLayout(user_frame)
+        self.user_label = QLabel(self.current_user.username)
+        self.user_label.setObjectName("userLabel")
+        self.role_label = QLabel(self.current_user.role.capitalize())
+        self.role_label.setObjectName("roleLabel")
+        user_frame_layout.addWidget(self.user_label)
+        user_frame_layout.addWidget(self.role_label)
+        sidebar_layout.addWidget(user_frame)
 
-        # --- Admin-specific buttons (connected) ---
-        self.btn_reports = QPushButton(_("view_reports"))
-        self.btn_reports.setObjectName("btnReports")
-        self.btn_reports.clicked.connect(lambda: self.switch_view(3)) # Connected
-        sidebar_layout.addWidget(self.btn_reports)
-
-        self.btn_backups = QPushButton(_("view_backups"))
-        self.btn_backups.setObjectName("btnBackups")
-        self.btn_backups.clicked.connect(lambda: self.switch_view(4)) # Connected
-        sidebar_layout.addWidget(self.btn_backups)
-
-        self.btn_archive = QPushButton(_("view_archive"))
-        self.btn_archive.setObjectName("btnArchive")
-        self.btn_archive.clicked.connect(lambda: self.switch_view(5)) # Connected
-        sidebar_layout.addWidget(self.btn_archive)
-
-        self.btn_settings = QPushButton(_("view_settings"))
-        self.btn_settings.setObjectName("btnSettings")
-        self.btn_settings.clicked.connect(lambda: self.switch_view(6)) # Connected
-        sidebar_layout.addWidget(self.btn_settings)
-
-        self.btn_exit = QPushButton(_("exit"))
-        self.btn_exit.setObjectName("btnExit")
+        # Exit Button
+        self.btn_exit = self.create_nav_button(_("exit"), "log-out.svg", -1)
         self.btn_exit.clicked.connect(self.close)
         sidebar_layout.addWidget(self.btn_exit)
 
-    def create_main_views(self):
-        """Create the main content views for the stacked widget."""
-        if not hasattr(self, 'stacked_widget'):
-            self.logger.error("Stacked widget not found when trying to create main views.")
-            return
+    def create_nav_button(self, text: str, icon_name: str, index: int) -> QPushButton:
+        """Factory method for creating a sidebar navigation button."""
+        button = QPushButton(text)
+        button.setObjectName("navButton")
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setIconSize(QSize(20, 20))
+        try:
+            button.setIcon(QIcon(str(get_icon_path(icon_name))))
+        except Exception as e:
+            self.logger.error(f"Could not load icon {icon_name}: {e}")
+        
+        if index != -1: # -1 is for non-view buttons like exit
+            button.clicked.connect(lambda: self.switch_view(index))
+        return button
 
-        # Instantiate views, passing the current user
+    def create_main_views(self):
+        """Instantiates and adds all main views to the stacked widget."""
         self.dashboard_view = DashboardView(self.current_user)
         self.employees_view = EmployeeView(self.current_user)
         self.attendance_view = AttendanceView(self.current_user)
         self.reports_view = ReportsView(self.current_user)
-        
-        # Ensure BackupsView is only instantiated once
-        if not hasattr(self, 'backups_view'): 
-            self.backups_view = BackupsView(self.current_user)
-            
+        self.backups_view = BackupsView(self.current_user)
         self.archive_view = ArchiveView(self.current_user)
-        
-        # Pass main window reference for potential restart logic
-        if not hasattr(self, 'settings_view'):
-            self.settings_view = SettingsView(self.current_user, self)
+        self.settings_view = SettingsView(self.current_user, self)
 
-        # Add views to the stacked widget in the correct order
-        # Order must match switch_view indices: 0=Dashboard, 1=Employees, etc.
         self.stacked_widget.addWidget(self.dashboard_view)
         self.stacked_widget.addWidget(self.employees_view)
         self.stacked_widget.addWidget(self.attendance_view)
@@ -304,134 +188,273 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.archive_view)
         self.stacked_widget.addWidget(self.settings_view)
 
-    def connect_signals(self):
-        """Connect signals between different views for real-time updates."""
-        # When an employee is changed in EmployeeView, reload the filter data in AttendanceView
-        self.employees_view.employee_changed.connect(self.attendance_view.load_filter_data)
-        self.logger.debug("Connected employee_changed signal from EmployeeView to AttendanceView.")
-
-        # Also, reload the employee list in the Dashboard's Quick Clock-In
-        self.employees_view.employee_changed.connect(self.dashboard_view.refresh_data)
-        self.logger.debug("Connected employee_changed signal from EmployeeView to DashboardView.")
-
     def switch_view(self, index: int):
-        """Switch the main view in the stacked widget and update button states."""
-        if hasattr(self, 'stacked_widget'):
-            self.stacked_widget.setCurrentIndex(index)
-            view_names = {
-                0: "Dashboard", 1: "Employees", 2: "Attendance",
-                3: "Reports", 4: "Backups", 5: "Archive", 6: "Settings"
-            }
-            self.status_bar.showMessage(f"View: {view_names.get(index, 'Unknown')}")
+        """Switches the main view and updates the active button style."""
+        self.stacked_widget.setCurrentIndex(index)
+        
+        for i, btn in enumerate(self.nav_buttons):
+            btn.setProperty("active", i == index)
+            # Re-polish to apply property-based stylesheet changes
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
-            # --- ADD THIS BLOCK ---
-            # Refresh specific views when switched to
-            if index == 4 and hasattr(self, 'backups_view'):
-                # Refresh the Backups view to show latest backups
-                self.backups_view.refresh_view()
-            # Add similar lines here for other views if needed in the future
-            # e.g., elif index == 1 and hasattr(self, 'employees_view'):
-            #           self.employees_view.refresh_view() # if EmployeesView had such a method
-            # --- END OF ADDITION ---
-
-            # Update sidebar button styles to indicate active view (basic implementation)
-            # Make sure all buttons are accounted for
-            buttons = [
-                self.btn_dashboard, self.btn_employees, self.btn_attendance,
-                self.btn_reports, self.btn_backups, self.btn_archive, self.btn_settings
-            ]
-            for i, btn in enumerate(buttons):
-                if i == index:
-                    btn.setStyleSheet("""
-                        QPushButton {
-                            text-align: left;
-                            padding: 10px;
-                            border: none;
-                            border-radius: 4px;
-                            background-color: #11563a; /* Active color */
-                            color: white;
-                            margin: 2px 5px;
-                        }
-                    """)
-                else:
-                    btn.setStyleSheet("""
-                        QPushButton {
-                            text-align: left;
-                            padding: 10px;
-                            border: none;
-                            border-radius: 4px;
-                            background-color: transparent;
-                            margin: 2px 5px;
-                        }
-                        QPushButton:hover {
-                            background-color: #e0e0e0;
-                        }
-                    """)
-        else:
-            self.logger.warning("Attempted to switch view, but stacked_widget is not initialized.")
+        # Refresh specific views when they become active
+        if index == 1: # Employees view
+            self.employees_view.load_employees()
+        elif index == 4: # Backups view
+            self.backups_view.refresh_view()
+        
+        view_names = [_("view_dashboard"), _("view_employees"), _("view_attendance"),
+                      _("view_reports"), _("view_backups"), _("view_archive"), _("view_settings")]
+        self.status_bar.showMessage(f"{_('status_view')}: {view_names[index]}")
 
     def update_ui_for_user_role(self):
-        """Show or hide UI elements based on the logged-in user's role."""
-        if not self.current_user:
-            self.logger.warning("update_ui_for_user_role called but no user is logged in.")
-            return
-
+        """Shows or hides UI elements based on the user's role."""
         is_admin = self.current_user.role == "admin"
         self.logger.debug(f"Updating UI for role: {'Admin' if is_admin else 'Operator'}")
+        
+        self.btn_reports.setVisible(is_admin)
+        self.btn_backups.setVisible(is_admin)
+        self.btn_archive.setVisible(is_admin)
+        self.btn_settings.setVisible(is_admin)
 
-        # Show/Hide admin-only sidebar buttons
-        admin_buttons = [self.btn_reports, self.btn_backups, self.btn_archive, self.btn_settings]
-        for btn in admin_buttons:
-            btn.setVisible(is_admin) # Set visibility directly
+    def setup_automatic_backup(self):
+        """Configures and starts the automatic backup timer."""
+        if self.current_user.role != "admin":
+            return
 
-        self.logger.debug(f"Admin buttons visibility set to: {is_admin}")
+        try:
+            frequency_days = config.settings.get("backup_frequency_days", 1)
+            if frequency_days <= 0:
+                self.logger.info("Automatic backup is disabled.")
+                return
+
+            interval_ms = int(timedelta(days=frequency_days).total_seconds() * 1000)
+            self.backup_timer = QTimer(self)
+            self.backup_timer.timeout.connect(self.perform_scheduled_backup)
+            self.backup_timer.start(max(interval_ms, 60000)) # Minimum 1 minute interval
+            self.logger.info(f"Automatic backup scheduled every {frequency_days} day(s).")
+        except Exception as e:
+            self.logger.error(f"Failed to setup automatic backup timer: {e}", exc_info=True)
+
+    def perform_scheduled_backup(self):
+        """Performs a scheduled backup via the backup service."""
+        if self.current_user.role != "admin":
+            return
+        try:
+            backup_path = backup_service.create_backup(manual=False)
+            self.logger.info(f"Scheduled backup created: {backup_path}")
+        except (BackupServiceError, Exception) as e:
+            self.logger.error(f"Scheduled backup failed: {e}", exc_info=True)
+
+    def connect_signals(self):
+        """Connects signals between different views."""
+        self.employees_view.employee_changed.connect(self.attendance_view.load_filter_data)
+        self.employees_view.employee_changed.connect(self.dashboard_view.refresh_data)
 
     def load_resources(self):
-        """Load external resources like fonts and icons."""
+        """Loads application-wide resources like fonts."""
         try:
-            # --- Load Fonts ---
-            font_path = get_font_path("Vazir-Regular.ttf")
-            if font_path and font_path.exists():
-                font_id = QFontDatabase.addApplicationFont(str(font_path))
-                if font_id != -1:
-                    font_families = QFontDatabase.applicationFontFamilies(font_id)
-                    if font_families:
-                        font_family = font_families[0]
-                        self.logger.info(f"Loaded font: {font_family}")
-                        self.default_font_family = font_family
-                    else:
-                        self.logger.warning(f"Font loaded but no family found for {font_path}")
-                else:
-                    self.logger.warning(f"Failed to load font from {font_path}")
-            else:
-                self.logger.warning("Vazir font file not found. UI might not display Persian text correctly.")
-
+            font_path = str(get_font_path("Vazir-Regular.ttf"))
+            if QFontDatabase.addApplicationFont(font_path) == -1:
+                self.logger.warning("Failed to load Vazir font.")
         except Exception as e:
             self.logger.error(f"Error loading resources: {e}", exc_info=True)
 
+    def apply_stylesheet(self):
+        """Applies the modern dark theme stylesheet to the main window and its children."""
+        self.setStyleSheet("""
+            QMainWindow, QDialog {
+                background-color: #2c3e50;
+                font-family: Vazir, Segoe UI, Arial, sans-serif;
+                color: #ecf0f1;
+            }
+            #sidebar {
+                background-color: #2c3e50;
+                border-right: 1px solid #34495e;
+            }
+            #sidebarTitle {
+                font-size: 24px;
+                font-weight: bold;
+                color: #ecf0f1;
+            }
+            QPushButton#navButton {
+                color: #bdc3c7;
+                background-color: transparent;
+                border: none;
+                padding: 12px;
+                border-radius: 8px;
+                text-align: left;
+                font-size: 14px;
+            }
+            QPushButton#navButton:hover {
+                background-color: #34495e;
+                color: #ecf0f1;
+            }
+            QPushButton#navButton[active="true"] {
+                background-color: #3498db;
+                color: white;
+                font-weight: bold;
+            }
+            #contentArea > QWidget {
+                background-color: #34495e;
+                color: #ecf0f1;
+            }
+            QStatusBar#statusBar {
+                background-color: #2c3e50;
+                color: #bdc3c7;
+            }
+            QStatusBar#statusBar::item {
+                border: 0px;
+            }
+            #userFrame {
+                border-top: 1px solid #34495e;
+                padding-top: 10px;
+                margin-top: 10px;
+            }
+            #userLabel {
+                font-size: 14px;
+                font-weight: bold;
+                color: #ecf0f1;
+            }
+            #roleLabel {
+                font-size: 12px;
+                color: #bdc3c7;
+            }
+
+            /* === Global Widget Styles for Views === */
+            QLabel {
+                color: #ecf0f1;
+                font-size: 14px;
+                background-color: transparent;
+            }
+            QLabel#viewTitle {
+                font-size: 22px;
+                font-weight: bold;
+                padding-bottom: 10px;
+                border-bottom: 1px solid #4a627a;
+                margin-bottom: 15px;
+            }
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 15px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+            QPushButton:pressed {
+                background-color: #1f618d;
+            }
+            QPushButton:disabled {
+                background-color: #566573;
+                color: #95a5a6;
+            }
+            
+            /* Specific Button Colors */
+            QPushButton#deleteButton { background-color: #c0392b; }
+            QPushButton#deleteButton:hover { background-color: #a93226; }
+            QPushButton#editButton { background-color: #f39c12; }
+            QPushButton#editButton:hover { background-color: #d68910; }
+            QPushButton#saveButton { background-color: #27ae60; }
+            QPushButton#saveButton:hover { background-color: #229954; }
+
+            QLineEdit, QComboBox, QDateEdit, QTimeEdit, QSpinBox {
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border: 1px solid #4a627a;
+                border-radius: 8px;
+                padding: 8px;
+                font-size: 14px;
+            }
+            QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QTimeEdit:focus, QSpinBox:focus {
+                border: 1px solid #3498db;
+            }
+            QTableView {
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border: 1px solid #4a627a;
+                gridline-color: #4a627a;
+                border-radius: 8px;
+                selection-background-color: #3498db;
+            }
+            QTableView::item {
+                padding: 5px;
+                border-bottom: 1px solid #4a627a;
+            }
+            QTableView::item:alternate {
+                background-color: #34495e; /* Lighter shade for alternating rows */
+            }
+            QHeaderView::section {
+                background-color: #34495e;
+                color: #ecf0f1;
+                padding: 8px;
+                border: 1px solid #4a627a;
+                font-weight: bold;
+            }
+            QGroupBox {
+                border: 1px solid #4a627a;
+                border-radius: 8px;
+                margin-top: 10px;
+                padding: 10px;
+                padding-top: 25px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 10px;
+                margin-left: 10px;
+                color: #ecf0f1;
+                font-weight: bold;
+            }
+            QTabWidget::pane {
+                border: 1px solid #4a627a;
+                border-top: none;
+                background-color: #34495e;
+                padding: 15px;
+            }
+            QTabBar::tab {
+                background: #2c3e50;
+                color: #bdc3c7;
+                border: 1px solid #4a627a;
+                border-bottom: none;
+                padding: 10px 20px;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                margin-right: 2px;
+            }
+            QTabBar::tab:hover {
+                background: #34495e;
+            }
+            QTabBar::tab:selected {
+                background: #34495e;
+                color: #ecf0f1;
+                font-weight: bold;
+            }
+            QTextEdit {
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border: 1px solid #4a627a;
+                border-radius: 8px;
+                padding: 8px;
+                font-family: "Courier New", Courier, monospace;
+            }
+        """)
+
     def closeEvent(self, event):
-        """Handle the window close event."""
-        # --- Stop the backup timer on application close ---
+        """Handles the window close event."""
         if self.backup_timer and self.backup_timer.isActive():
             self.backup_timer.stop()
-            self.logger.debug("Backup timer stopped on application close.")
-        # ---
         
-        reply = QMessageBox.question(
-            self, _("confirm_exit"),
-            _("are_you_sure_quit"),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
+        reply = QMessageBox.question(self, _("confirm_exit"), _("are_you_sure_quit"),
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            self.logger.info("Application closed by user.")
             event.accept()
         else:
             event.ignore()
 
-# Example usage (if run directly for testing the window *after* login logic)
-# if __name__ == '__main__':
-#     app = QApplication(sys.argv)
-#     window = MainWindow()
-#     sys.exit(app.exec())

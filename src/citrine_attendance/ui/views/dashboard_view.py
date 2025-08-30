@@ -1,244 +1,177 @@
 # src/citrine_attendance/ui/views/dashboard_view.py
-"""Dashboard view for the main window."""
+"""Dashboard view with a modern UI."""
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QComboBox, QDateEdit, QMessageBox
+    QFrame, QComboBox, QMessageBox, QGroupBox
 )
 from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QFont
-import jdatetime
-import datetime
 
 from ...services.employee_service import employee_service
-from ...services.attendance_service import attendance_service
+from ...services.attendance_service import attendance_service, AttendanceServiceError
 from ...database import get_db_session
-from ...date_utils import gregorian_to_jalali, format_jalali_date
 from ...locale import _
 
-
 class DashboardView(QWidget):
-    """The main dashboard view widget."""
+    """The main dashboard view widget, styled by the main window's stylesheet."""
 
     def __init__(self, current_user):
         super().__init__()
         self.logger = logging.getLogger(__name__)
         self.current_user = current_user
-        self.db_session = None # Will get session when needed
         self.init_ui()
-        self.refresh_data() # Load initial data
+        # Load initial data for the view
+        self.refresh_data()
 
     def init_ui(self):
         """Initialize the dashboard UI elements."""
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(20)
-        main_layout.setContentsMargins(20, 20, 20, 20) # Add some margins
+        main_layout.setContentsMargins(25, 25, 25, 25)
+        main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # Welcome/User Info Card
-        welcome_card = self.create_welcome_card()
-        main_layout.addWidget(welcome_card)
+        # View Title
+        title_label = QLabel(_("dashboard_title"))
+        title_label.setObjectName("viewTitle")
+        main_layout.addWidget(title_label)
+        
+        # User Welcome Message
+        welcome_label = QLabel(_("dashboard_welcome", username=self.current_user.username))
+        main_layout.addWidget(welcome_label)
 
         # KPI Cards Layout (Horizontal)
-        kpi_cards_layout = self.create_kpi_cards()
-        main_layout.addLayout(kpi_cards_layout)
-
-        # Quick Actions Section
-        actions_label = QLabel(_("dashboard_quick_actions"))
-        actions_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 10px;")
-        main_layout.addWidget(actions_label)
+        kpi_layout = self.create_kpi_cards()
+        main_layout.addLayout(kpi_layout)
 
         # Quick Clock-In Section
-        clockin_section = self.create_quick_clockin_section()
-        main_layout.addWidget(clockin_section)
+        clockin_groupbox = self.create_quick_clockin_section()
+        main_layout.addWidget(clockin_groupbox)
 
         # Spacer to push content up
         main_layout.addStretch()
 
+        # Connect signals
         self.clockin_btn.clicked.connect(lambda: self.on_action_clicked("in"))
         self.clockout_btn.clicked.connect(lambda: self.on_action_clicked("out"))
 
-    def create_welcome_card(self):
-        """Create the welcome/user info card."""
-        welcome_card = QFrame()
-        welcome_card.setFrameShape(QFrame.Shape.StyledPanel)
-        welcome_card.setStyleSheet("""
-            background-color: #ffffff;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #e0e0e0;
-        """)
-        welcome_layout = QHBoxLayout(welcome_card)
-        welcome_label = QLabel(_("dashboard_welcome", username=self.current_user.username))
-        welcome_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        role_label = QLabel(_("dashboard_role", role=self.current_user.role.capitalize()))
-        role_label.setStyleSheet("color: #757575;")
-        # Spacer to push role label to the right
-        welcome_layout.addWidget(welcome_label)
-        welcome_layout.addStretch()
-        welcome_layout.addWidget(role_label)
-        return welcome_card
-
-    def create_kpi_cards(self):
+    def create_kpi_cards(self) -> QHBoxLayout:
         """Create the KPI summary cards layout."""
         kpi_layout = QHBoxLayout()
-        kpi_layout.setSpacing(15)
+        kpi_layout.setSpacing(20)
 
-        # Initialize with 0s, will be updated by refresh_data
+        # Initialize value labels
         self.kpi_present_value = QLabel("0")
+        self.kpi_present_value.setObjectName("kpiValue")
         self.kpi_absent_value = QLabel("0")
+        self.kpi_absent_value.setObjectName("kpiValue")
 
-        kpi_data = [
-            {"title": _("dashboard_present_today"), "value_label": self.kpi_present_value, "color": "#c8e6c9", "tooltip": "Employees clocked in today"},
-            {"title": _("dashboard_absent_today"), "value_label": self.kpi_absent_value, "color": "#ffcdd2", "tooltip": "Employees not clocked in today"},
-        ]
-
-        self.kpi_cards = [] # Keep references to cards for potential styling updates
-        for data in kpi_data:
-            kpi_card = QFrame()
-            kpi_card.setFrameShape(QFrame.Shape.StyledPanel)
-            kpi_card.setStyleSheet(f"""
-                background-color: {data['color']};
-                padding: 15px;
-                border-radius: 8px;
-                min-width: 150px;
-            """)
-            kpi_card.setToolTip(data['tooltip'])
-            kpi_card_layout = QVBoxLayout(kpi_card)
-            kpi_title = QLabel(data["title"])
-            kpi_title.setStyleSheet("font-size: 14px; color: #616161;")
-            # Use the pre-created label for value
-            data["value_label"].setStyleSheet("font-size: 24px; font-weight: bold;")
-            kpi_card_layout.addWidget(kpi_title)
-            kpi_card_layout.addWidget(data["value_label"])
-            kpi_layout.addWidget(kpi_card)
-            self.kpi_cards.append(kpi_card)
-
-        # Add stretch to push cards to the left
+        # Create Present Card
+        present_card = QFrame()
+        present_card.setObjectName("kpiCard")
+        present_card.setProperty("status", "present")
+        present_card_layout = QVBoxLayout(present_card)
+        present_title = QLabel(_("dashboard_present_today"))
+        present_title.setObjectName("kpiTitle")
+        present_card_layout.addWidget(present_title)
+        present_card_layout.addWidget(self.kpi_present_value)
+        kpi_layout.addWidget(present_card)
+        
+        # Create Absent Card
+        absent_card = QFrame()
+        absent_card.setObjectName("kpiCard")
+        absent_card.setProperty("status", "absent")
+        absent_card_layout = QVBoxLayout(absent_card)
+        absent_title = QLabel(_("dashboard_absent_today"))
+        absent_title.setObjectName("kpiTitle")
+        absent_card_layout.addWidget(absent_title)
+        absent_card_layout.addWidget(self.kpi_absent_value)
+        kpi_layout.addWidget(absent_card)
+        
         kpi_layout.addStretch()
         return kpi_layout
 
-    def create_quick_clockin_section(self):
-        """Create the quick clock-in section."""
-        clockin_frame = QFrame()
-        clockin_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        clockin_frame.setStyleSheet("""
-            background-color: #ffffff;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #e0e0e0;
-        """)
-        clockin_layout = QVBoxLayout(clockin_frame)
-
-        title_layout = QHBoxLayout()
-        title_label = QLabel(_("dashboard_quick_clock_in_out"))
-        title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        title_layout.addWidget(title_label)
-        title_layout.addStretch()
-        clockin_layout.addLayout(title_layout)
+    def create_quick_clockin_section(self) -> QGroupBox:
+        """Create the quick clock-in section within a styled group box."""
+        clockin_groupbox = QGroupBox(_("dashboard_quick_actions"))
+        
+        group_layout = QVBoxLayout(clockin_groupbox)
+        group_layout.setSpacing(15)
 
         # Employee selection
         emp_layout = QHBoxLayout()
         emp_layout.addWidget(QLabel(_("dashboard_select_employee")))
         self.employee_combo = QComboBox()
-        self.employee_combo.setMinimumWidth(200)
+        self.employee_combo.setMinimumWidth(250)
         emp_layout.addWidget(self.employee_combo)
         emp_layout.addStretch()
-        clockin_layout.addLayout(emp_layout)
+        group_layout.addLayout(emp_layout)
 
         # Action buttons
         btn_layout = QHBoxLayout()
         self.clockin_btn = QPushButton(_("dashboard_clock_in"))
-        self.clockin_btn.setStyleSheet(self.get_button_style("#11563a")) # Brand color
-
+        self.clockin_btn.setObjectName("clockInButton")
         self.clockout_btn = QPushButton(_("dashboard_clock_out"))
-        self.clockout_btn.setStyleSheet(self.get_button_style("#ffa500")) # Secondary color
+        self.clockout_btn.setObjectName("clockOutButton")
 
+        btn_layout.addStretch()
         btn_layout.addWidget(self.clockin_btn)
         btn_layout.addWidget(self.clockout_btn)
-        btn_layout.addStretch()
-        clockin_layout.addLayout(btn_layout)
+        group_layout.addLayout(btn_layout)
 
-        return clockin_frame
-
-    def get_button_style(self, bg_color):
-        """Helper to get consistent button styles."""
-        return f"""
-            QPushButton {{
-                background-color: {bg_color};
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 5px;
-                font-size: 14px;
-            }}
-            QPushButton:hover {{
-                background-color: {self.darken_color(bg_color)};
-            }}
-            QPushButton:disabled {{
-                background-color: #bdbdbd;
-                color: #9e9e9e;
-            }}
-        """
-
-    def darken_color(self, color_hex):
-        """Simple function to darken a hex color for hover effects."""
-        color_hex = color_hex.lstrip('#')
-        rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
-        darker_rgb = tuple(max(0, int(c * 0.9)) for c in rgb)
-        return f"#{darker_rgb[0]:02x}{darker_rgb[1]:02x}{darker_rgb[2]:02x}"
+        return clockin_groupbox
 
     def refresh_data(self):
         """Refresh dashboard data like KPIs and employee list."""
+        self.logger.debug("Refreshing dashboard view data.")
+        db = None
         try:
-            session_gen = get_db_session()
-            self.db_session = next(session_gen)
-
-            # --- Refresh KPIs ---
+            db = next(get_db_session())
+            # Refresh KPIs
             today = QDate.currentDate().toPyDate()
-            summary = attendance_service.get_daily_summary(today, db=self.db_session)
-
+            summary = attendance_service.get_daily_summary(today, db=db)
             self.kpi_present_value.setText(str(summary['present']))
             self.kpi_absent_value.setText(str(summary['absent']))
             self.logger.debug(f"Dashboard KPIs refreshed for {today}: {summary}")
 
-            # --- Refresh Employee Combo Box ---
+            # Refresh Employee Combo Box
+            current_selection = self.employee_combo.currentData()
             self.employee_combo.clear()
-            self.employee_combo.addItem("--- Select an Employee ---", None)
-            employees = employee_service.get_all_employees(db=self.db_session)
+            self.employee_combo.addItem(_("select_employee"), None)
+            employees = employee_service.get_all_employees(db=db)
             for emp in employees:
                 display_name = f"{emp.first_name} {emp.last_name}".strip() or emp.email
                 self.employee_combo.addItem(display_name, emp.id)
+            
+            # Restore previous selection if it still exists
+            if current_selection:
+                index = self.employee_combo.findData(current_selection)
+                if index != -1:
+                    self.employee_combo.setCurrentIndex(index)
+            
             self.logger.debug(f"Employee combo box refreshed with {len(employees)} employees.")
-
         except Exception as e:
             self.logger.error(f"Error refreshing dashboard data: {e}", exc_info=True)
+            QMessageBox.critical(self, _("error"), _("dashboard_refresh_error", error=str(e)))
         finally:
-            if self.db_session:
-                self.db_session.close()
-                self.db_session = None
+            if db:
+                db.close()
 
-    def on_action_clicked(self, action_type):
+    def on_action_clicked(self, action_type: str):
         """Handle Clock In or Clock Out button clicks."""
         emp_id = self.employee_combo.currentData()
         if not emp_id:
-            QMessageBox.warning(self, _("dashboard_no_employee_selected"), _("dashboard_please_select_employee"))
+            QMessageBox.warning(self, _("dashboard_no_employee_selected_title"), _("dashboard_please_select_employee"))
             return
 
-        action_name = "Clock-In" if action_type == "in" else "Clock-Out"
-
+        action_name = _("dashboard_clock_in") if action_type == "in" else _("dashboard_clock_out")
         try:
             record = None
             if action_type == "in":
                 record = attendance_service.clock_in(emp_id)
             elif action_type == "out":
                 record = attendance_service.clock_out(emp_id)
-            else:
-                self.logger.warning(f"Unknown action type '{action_type}' requested.")
-                return
-
-            # Determine the relevant timestamp for the success message
+            
             timestamp = record.time_out if action_type == "out" and record.time_out else record.time_in
-
             QMessageBox.information(
                 self,
                 _("dashboard_success"),
@@ -251,6 +184,10 @@ class DashboardView(QWidget):
             self.logger.info(f"{action_name} successful for Employee ID {emp_id}.")
             self.refresh_data()
 
+        except AttendanceServiceError as e:
+            self.logger.warning(f"Attendance Error during {action_name} for Employee ID {emp_id}: {e}")
+            QMessageBox.warning(self, _("warning"), str(e))
         except Exception as e:
             self.logger.error(f"Error during {action_name} for Employee ID {emp_id}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to record {action_name.lower()}: {e}")
+            QMessageBox.critical(self, _("error"), _("dashboard_action_failed", action=action_name.lower(), error=str(e)))
+

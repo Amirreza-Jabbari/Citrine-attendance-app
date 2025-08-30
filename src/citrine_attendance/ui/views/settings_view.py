@@ -4,18 +4,18 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QPushButton, QMessageBox, QApplication, QFileDialog, QCheckBox,
-    QLineEdit, QSpinBox, QTextEdit, QTabWidget, QGroupBox, QTimeEdit
+    QLineEdit, QSpinBox, QTextEdit, QTabWidget, QGroupBox
 )
 from PyQt6.QtCore import Qt, QTime
 
 from ...config import config
-from ...services.user_service import user_service
-from ...database import User
+from ...services.user_service import user_service, UserServiceError
+from ...database import User, get_db_session
 from ...locale import _
-
+from ..widgets.custom_time_edit import CustomTimeEdit
 
 class SettingsView(QWidget):
-    """The settings view widget."""
+    """The settings view widget, styled by the main window's stylesheet."""
 
     def __init__(self, current_user, main_window_ref=None):
         super().__init__()
@@ -28,91 +28,85 @@ class SettingsView(QWidget):
 
     def init_ui(self):
         """Initialize the settings view UI."""
-        layout = QVBoxLayout(self)
-        layout.setSpacing(15)
-        layout.setContentsMargins(15, 15, 15, 15)
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(25, 25, 25, 25)
 
         title_label = QLabel(_("settings_title"))
-        title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
-        layout.addWidget(title_label)
+        title_label.setObjectName("viewTitle")
+        main_layout.addWidget(title_label)
 
         self.tabs = QTabWidget()
-        layout.addWidget(self.tabs, 1)
+        main_layout.addWidget(self.tabs, 1)
 
-        # --- General Settings Tab ---
+        # --- Create Tabs ---
+        self.create_general_tab()
+        self.create_backups_tab()
+        self.create_users_tab()
+        self.create_audit_log_tab()
+
+        # --- Save Button ---
+        self.save_button = QPushButton(_("settings_save_button"))
+        self.save_button.setObjectName("saveButton") # For specific styling
+        self.save_button.clicked.connect(self.save_settings)
+        main_layout.addWidget(self.save_button, 0, Qt.AlignmentFlag.AlignRight)
+
+        # Initial data load for admin tabs
+        self.load_users_list()
+        self.load_audit_log()
+
+    def create_general_tab(self):
+        """Creates the General Settings tab."""
         self.general_tab = QWidget()
-        general_layout = QVBoxLayout(self.general_tab)
-        general_form = QFormLayout()
-
+        general_layout = QFormLayout(self.general_tab)
+        general_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        
         self.language_combo = QComboBox()
         self.language_combo.addItem("English", "en")
         self.language_combo.addItem("Persian (فارسی)", "fa")
-        general_form.addRow(_("settings_language"), self.language_combo)
+        general_layout.addRow(_("settings_language"), self.language_combo)
 
         self.date_format_combo = QComboBox()
         self.date_format_combo.addItem("Jalali and Gregorian", "both")
         self.date_format_combo.addItem("Jalali Only", "jalali")
         self.date_format_combo.addItem("Gregorian Only", "gregorian")
-        general_form.addRow(_("settings_date_format"), self.date_format_combo)
+        general_layout.addRow(_("settings_date_format"), self.date_format_combo)
         
-        # --- New Settings ---
         self.workday_hours_spinbox = QSpinBox()
         self.workday_hours_spinbox.setRange(1, 24)
-        self.workday_hours_spinbox.setSuffix(" hours")
-        general_form.addRow("Workday Duration:", self.workday_hours_spinbox)
+        general_layout.addRow("Workday Duration (hours):", self.workday_hours_spinbox)
 
         self.launch_time_spinbox = QSpinBox()
         self.launch_time_spinbox.setRange(0, 240)
-        self.launch_time_spinbox.setSuffix(" minutes")
-        general_form.addRow("Default Launch Time:", self.launch_time_spinbox)
+        general_layout.addRow("Default Launch Time (minutes):", self.launch_time_spinbox)
 
-        self.late_threshold_edit = QTimeEdit()
-        self.late_threshold_edit.setDisplayFormat("HH:mm")
-        general_form.addRow("Late Threshold:", self.late_threshold_edit)
+        self.late_threshold_edit = CustomTimeEdit()
+        general_layout.addRow("Late Threshold:", self.late_threshold_edit)
 
-        db_layout = QHBoxLayout()
-        self.db_path_edit = QLineEdit()
-        self.browse_db_btn = QPushButton(_("settings_browse"))
-        self.browse_db_btn.clicked.connect(self.browse_db_path)
-        db_layout.addWidget(self.db_path_edit)
-        db_layout.addWidget(self.browse_db_btn)
-        general_form.addRow(_("settings_db_path"), db_layout)
-        
-        general_layout.addLayout(general_form)
-        general_layout.addStretch()
         self.tabs.addTab(self.general_tab, _("settings_general_tab"))
 
-        # ... (Backup, Users, Audit tabs remain the same)
-        # --- Backup Settings Tab ---
+    def create_backups_tab(self):
+        """Creates the Backups Settings tab."""
         self.backup_tab = QWidget()
-        backup_layout = QVBoxLayout(self.backup_tab)
-
-        backup_form = QFormLayout()
+        backup_form = QFormLayout(self.backup_tab)
+        
         self.backup_freq_spinbox = QSpinBox()
         self.backup_freq_spinbox.setRange(0, 365)
-        self.backup_freq_spinbox.setValue(1)
         backup_form.addRow(_("settings_backup_frequency"), self.backup_freq_spinbox)
 
         self.backup_retention_spinbox = QSpinBox()
         self.backup_retention_spinbox.setRange(1, 1000)
-        self.backup_retention_spinbox.setValue(10)
         backup_form.addRow(_("settings_backup_retention"), self.backup_retention_spinbox)
-
-        self.backup_encrypt_checkbox = QCheckBox(_("settings_backup_encryption"))
-        self.backup_encrypt_checkbox.setEnabled(False)
-        backup_form.addRow(self.backup_encrypt_checkbox)
-
-        backup_layout.addLayout(backup_form)
-        backup_layout.addStretch()
 
         self.tabs.addTab(self.backup_tab, _("settings_backups_tab"))
         
-        # --- User Management Tab (Admin Only) ---
+    def create_users_tab(self):
+        """Creates the User Management tab."""
         self.users_tab = QWidget()
         users_layout = QVBoxLayout(self.users_tab)
 
-        self.add_user_group = QGroupBox(_("settings_add_user_group"))
-        add_user_layout = QFormLayout(self.add_user_group)
+        add_user_group = QGroupBox(_("settings_add_user_group"))
+        add_user_layout = QFormLayout(add_user_group)
 
         self.new_username_edit = QLineEdit()
         add_user_layout.addRow(_("settings_new_username"), self.new_username_edit)
@@ -130,20 +124,24 @@ class SettingsView(QWidget):
         self.add_user_button.clicked.connect(self.add_new_user)
         add_user_layout.addRow(self.add_user_button)
 
-        users_layout.addWidget(self.add_user_group)
+        existing_users_group = QGroupBox(_("settings_existing_users"))
+        existing_users_layout = QVBoxLayout(existing_users_group)
         self.users_list_text = QTextEdit()
         self.users_list_text.setReadOnly(True)
-        users_layout.addWidget(self.users_list_text, 1)
-
         self.refresh_users_button = QPushButton(_("settings_refresh_user_list"))
         self.refresh_users_button.clicked.connect(self.load_users_list)
-        users_layout.addWidget(self.refresh_users_button)
-
+        existing_users_layout.addWidget(self.users_list_text, 1)
+        existing_users_layout.addWidget(self.refresh_users_button)
+        
+        users_layout.addWidget(add_user_group)
+        users_layout.addWidget(existing_users_group)
         self.tabs.addTab(self.users_tab, _("settings_users_tab"))
 
-        # --- Audit Log Tab (Admin Only) ---
+    def create_audit_log_tab(self):
+        """Creates the Audit Log tab."""
         self.audit_tab = QWidget()
         audit_layout = QVBoxLayout(self.audit_tab)
+        audit_layout.addWidget(QLabel(_("settings_audit_log_header")))
         self.audit_log_text = QTextEdit()
         self.audit_log_text.setReadOnly(True)
         audit_layout.addWidget(self.audit_log_text, 1)
@@ -152,63 +150,35 @@ class SettingsView(QWidget):
         audit_layout.addWidget(self.refresh_audit_button)
         self.tabs.addTab(self.audit_tab, _("settings_audit_log_tab"))
 
-
-        # --- Save Button ---
-        self.save_button = QPushButton(_("settings_save_button"))
-        self.save_button.setStyleSheet("background-color: #11563a; color: white; padding: 10px; font-size: 16px;")
-        self.save_button.clicked.connect(self.save_settings)
-        layout.addWidget(self.save_button)
-
-        self.load_users_list()
-        self.load_audit_log()
-
     def populate_settings(self):
-        """Fill the UI controls with current settings."""
+        """Fill the UI controls with current settings from config."""
         settings = config.settings
-
-        # ... (Existing settings population) ...
-        lang_code = settings.get("language", "en")
-        index = self.language_combo.findData(lang_code)
+        
+        index = self.language_combo.findData(settings.get("language", "en"))
         if index >= 0: self.language_combo.setCurrentIndex(index)
         
-        date_fmt = settings.get("date_format", "both")
-        index = self.date_format_combo.findData(date_fmt)
+        index = self.date_format_combo.findData(settings.get("date_format", "both"))
         if index >= 0: self.date_format_combo.setCurrentIndex(index)
 
-        self.db_path_edit.setText(settings.get("db_path_override", ""))
-        self.backup_freq_spinbox.setValue(settings.get("backup_frequency_days", 1))
-        self.backup_retention_spinbox.setValue(settings.get("backup_retention_count", 10))
-        self.backup_encrypt_checkbox.setChecked(settings.get("enable_backup_encryption", False))
-
-        # Populate new settings
         self.workday_hours_spinbox.setValue(settings.get("workday_hours", 8))
         self.launch_time_spinbox.setValue(settings.get("default_launch_time_minutes", 60))
         
         late_time_str = settings.get("late_threshold_time", "10:00")
         self.late_threshold_edit.setTime(QTime.fromString(late_time_str, "HH:mm"))
 
-    def browse_db_path(self):
-        # ... (no changes here) ...
-        current_path = self.db_path_edit.text() or str(config.user_data_dir)
-        filename, _ = QFileDialog.getSaveFileName(self, "Select Database File", current_path, "SQLite Database (*.db)")
-        if filename:
-            self.db_path_edit.setText(str(Path(filename).resolve()))
+        self.backup_freq_spinbox.setValue(settings.get("backup_frequency_days", 1))
+        self.backup_retention_spinbox.setValue(settings.get("backup_retention_count", 10))
 
     def save_settings(self):
-        """Save the settings from the UI to the config."""
+        """Save the settings from the UI to the config file."""
         try:
-            # ... (Save existing settings) ...
             config.update_setting("language", self.language_combo.currentData())
             config.update_setting("date_format", self.date_format_combo.currentData())
-            config.update_setting("db_path_override", self.db_path_edit.text().strip() or None)
-            config.update_setting("backup_frequency_days", self.backup_freq_spinbox.value())
-            config.update_setting("backup_retention_count", self.backup_retention_spinbox.value())
-            config.update_setting("enable_backup_encryption", self.backup_encrypt_checkbox.isChecked())
-
-            # Save new settings
             config.update_setting("workday_hours", self.workday_hours_spinbox.value())
             config.update_setting("default_launch_time_minutes", self.launch_time_spinbox.value())
             config.update_setting("late_threshold_time", self.late_threshold_edit.time().toString("HH:mm"))
+            config.update_setting("backup_frequency_days", self.backup_freq_spinbox.value())
+            config.update_setting("backup_retention_count", self.backup_retention_spinbox.value())
 
             QMessageBox.information(self, "Settings Saved", _("settings_saved_message"))
             self.logger.info("Settings saved by user.")
@@ -220,13 +190,12 @@ class SettingsView(QWidget):
                 QMessageBox.StandardButton.No
             )
             if reply == QMessageBox.StandardButton.Yes and self.main_window:
-                QApplication.instance().quit()
+                self.main_window.close() # Or a more graceful restart method
 
         except Exception as e:
             self.logger.error(f"Error saving settings: {e}", exc_info=True)
-            QMessageBox.critical(self, _("settings_save_error"), _("settings_failed_to_save", error=e))
+            QMessageBox.critical(self, _("settings_save_error"), _("settings_failed_to_save", error=str(e)))
 
-    # --- User Management & Audit Log (no changes here) ---
     def add_new_user(self):
         """Add a new user account."""
         if self.current_user.role != "admin":
@@ -242,49 +211,47 @@ class SettingsView(QWidget):
             return
 
         try:
-            db_session = user_service._get_session()
-            user_service.create_user(username, password, role, db=db_session)
-            db_session.close()
+            user_service.create_user(username, password, role)
             QMessageBox.information(self, "Success", _("settings_user_created_success", username=username))
             self.new_username_edit.clear()
             self.new_password_edit.clear()
             self.load_users_list()
-        except Exception as e:
-            QMessageBox.critical(self, "Error", _("settings_failed_to_create_user", error=e))
+        except UserServiceError as e:
+            QMessageBox.critical(self, "Error", _("settings_failed_to_create_user", error=str(e)))
     
     def load_users_list(self):
         """Load and display the list of users."""
         if self.current_user.role != "admin":
-            self.users_list_text.setPlainText(_("settings_access_restricted_to_admins"))
-            self.add_user_group.setEnabled(False)
-            self.refresh_users_button.setEnabled(False)
+            self.tabs.setTabEnabled(self.tabs.indexOf(self.users_tab), False)
             return
         
+        db = None
         try:
-            db_session = user_service._get_session()
-            users = db_session.query(User).all()
-            db_session.close()
+            db = next(get_db_session())
+            users = db.query(User).all()
             user_lines = [f"{'Username':<20} {'Role':<15} {'Last Login'}"]
-            user_lines.append("-" * 50)
+            user_lines.append("-" * 55)
             for user in users:
                 last_login = user.last_login.strftime('%Y-%m-%d %H:%M') if user.last_login else "Never"
                 user_lines.append(f"{user.username:<20} {user.role:<15} {last_login}")
             self.users_list_text.setPlainText("\n".join(user_lines))
         except Exception as e:
-            self.users_list_text.setPlainText(_("settings_error_loading_users", error=e))
+            self.users_list_text.setPlainText(_("settings_error_loading_users", error=str(e)))
+        finally:
+            if db:
+                db.close()
 
     def load_audit_log(self):
         """Load and display recent audit log entries."""
         if self.current_user.role != "admin":
-            self.audit_log_text.setPlainText(_("settings_access_restricted_to_admins"))
-            self.refresh_audit_button.setEnabled(False)
+            self.tabs.setTabEnabled(self.tabs.indexOf(self.audit_tab), False)
             return
         
         from ...database import AuditLog
+        db = None
         try:
-            db_session = user_service._get_session()
-            entries = db_session.query(AuditLog).order_by(AuditLog.performed_at.desc()).limit(200).all()
-            db_session.close()
+            db = next(get_db_session())
+            entries = db.query(AuditLog).order_by(AuditLog.performed_at.desc()).limit(200).all()
             log_lines = [f"{'Timestamp':<25} {'User':<15} {'Action':<15} {'Details'}"]
             log_lines.append("-" * 80)
             for entry in entries:
@@ -293,4 +260,8 @@ class SettingsView(QWidget):
                 log_lines.append(f"{ts:<25} {entry.performed_by:<15} {entry.action:<15} {details}")
             self.audit_log_text.setPlainText("\n".join(log_lines))
         except Exception as e:
-            self.audit_log_text.setPlainText(_("settings_error_loading_audit_log", error=e))
+            self.audit_log_text.setPlainText(_("settings_error_loading_audit_log", error=str(e)))
+        finally:
+            if db:
+                db.close()
+
