@@ -1,119 +1,52 @@
 # src/citrine_attendance/services/attendance_service.py
-"""
-Service layer for managing attendance records.
-Handles clock-in/out, manual entry/editing, calculations, and data retrieval.
-"""
 import logging
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_
+from sqlalchemy import and_
 import datetime
 from ..database import Attendance, Employee, get_db_session
 from ..config import config
 
-
-class AttendanceServiceError(Exception):
-    """Base exception for attendance service errors."""
-    pass
-
-class AttendanceNotFoundError(AttendanceServiceError):
-    """Raised when an attendance record is not found."""
-    pass
-
-class AttendanceAlreadyExistsError(AttendanceServiceError):
-    """Raised if trying to create a conflicting record."""
-    pass
+class AttendanceServiceError(Exception): pass
+class AttendanceNotFoundError(AttendanceServiceError): pass
+class AttendanceAlreadyExistsError(AttendanceServiceError): pass
 
 class AttendanceService:
-    """Service class to handle attendance-related business logic."""
-
     STATUS_PRESENT = "present"
     STATUS_ABSENT = "absent"
-    STATUS_DISPLAY = {"present": "Present", "absent": "Absent"}
-
-    def __init__(self):
-        """Initialize the service."""
-        pass
+    STATUS_ON_LEAVE = "on_leave" # New status
+    STATUS_DISPLAY = {"present": "Present", "absent": "Absent", "on_leave": "On Leave"}
 
     def _get_session(self) -> Session:
-        """Helper to get a database session."""
-        session_gen = get_db_session()
-        return next(session_gen)
-
-    def clock_in(self, employee_id: int, db: Optional[Session] = None) -> Attendance:
-        """Handles the logic for an employee clocking in."""
-        managed = db is None
-        db = db or self._get_session()
-        try:
-            today = datetime.date.today()
-            now_time = datetime.datetime.now().time()
-
-            record = db.query(Attendance).filter(
-                and_(Attendance.employee_id == employee_id, Attendance.date == today)
-            ).first()
-
-            if record:
-                if record.time_in:
-                    raise AttendanceServiceError(f"Employee {employee_id} has already clocked in today.")
-                record.time_in = now_time
-            else:
-                record = Attendance(
-                    employee_id=employee_id,
-                    date=today,
-                    time_in=now_time,
-                )
-                db.add(record)
-
-            self._calculate_all_fields(record)
-            db.commit()
-            db.refresh(record)
-            return record
-        except Exception as e:
-            db.rollback()
-            raise AttendanceServiceError(f"Failed to clock in: {e}") from e
-        finally:
-            if managed: db.close()
-
-    def clock_out(self, employee_id: int, db: Optional[Session] = None) -> Attendance:
-        """Handles the logic for an employee clocking out."""
-        managed = db is None
-        db = db or self._get_session()
-        try:
-            today = datetime.date.today()
-            now_time = datetime.datetime.now().time()
-
-            record = db.query(Attendance).filter(
-                and_(Attendance.employee_id == employee_id, Attendance.date == today)
-            ).first()
-
-            if not record or not record.time_in:
-                raise AttendanceServiceError(f"Employee {employee_id} has not clocked in today.")
-
-            record.time_out = now_time
-            self._calculate_all_fields(record)
-            db.commit()
-            db.refresh(record)
-            return record
-        except Exception as e:
-            db.rollback()
-            raise AttendanceServiceError(f"Failed to clock out: {e}") from e
-        finally:
-            if managed: db.close()
+        return next(get_db_session())
 
     def _calculate_all_fields(self, record: Attendance):
-        """
-        Calculates all derived time fields for an attendance record.
-        """
+        """Calculates all derived time fields for an attendance record."""
+        # Reset all calculated fields
         record.duration_minutes = None
         record.launch_duration_minutes = None
+        record.leave_duration_minutes = None
         record.tardiness_minutes = None
         record.main_work_minutes = None
         record.overtime_minutes = None
         record.status = self.STATUS_ABSENT
 
+        # Calculate leave duration first
+        leave_minutes = 0
+        if record.leave_start and record.leave_end and record.leave_end > record.leave_start:
+            leave_dt_start = datetime.datetime.combine(record.date, record.leave_start)
+            leave_dt_end = datetime.datetime.combine(record.date, record.leave_end)
+            leave_minutes = int((leave_dt_end - leave_dt_start).total_seconds() / 60)
+        record.leave_duration_minutes = leave_minutes
+
+        # Determine status based on presence and leave
+        if record.time_in:
+            record.status = self.STATUS_PRESENT
+        if leave_minutes > 0 and not record.time_in:
+            record.status = self.STATUS_ON_LEAVE
+
+        # Stop if there's no time_in/time_out range
         if not (record.time_in and record.time_out and record.time_out > record.time_in):
-            if record.time_in:
-                record.status = self.STATUS_PRESENT
             return
 
         dt_in = datetime.datetime.combine(record.date, record.time_in)
@@ -121,36 +54,40 @@ class AttendanceService:
 
         total_duration_minutes = int((dt_out - dt_in).total_seconds() / 60)
         record.duration_minutes = total_duration_minutes
-        record.status = self.STATUS_PRESENT
-
+        
+        # Calculate launch time based on settings
         launch_minutes = 0
-        if record.launch_start and record.launch_end and record.launch_end > record.launch_start:
-            launch_dt_start = datetime.datetime.combine(record.date, record.launch_start)
-            launch_dt_end = datetime.datetime.combine(record.date, record.launch_end)
-            launch_minutes = int((launch_dt_end - launch_dt_start).total_seconds() / 60)
-        elif total_duration_minutes > (config.settings.get("workday_hours", 8) * 60) / 2:
-            launch_minutes = config.settings.get("default_launch_time_minutes", 60)
-        record.launch_duration_minutes = launch_minutes
+        try:
+            start_str = config.settings.get("default_launch_start_time", "12:30")
+            end_str = config.settings.get("default_launch_end_time", "13:30")
+            h_start, m_start = map(int, start_str.split(':'))
+            h_end, m_end = map(int, end_str.split(':'))
+            launch_start_time = datetime.time(h_start, m_start)
+            launch_end_time = datetime.time(h_end, m_end)
+            
+            # Check if the work period overlaps with launch time
+            if record.time_in < launch_end_time and record.time_out > launch_start_time:
+                 launch_minutes = (datetime.datetime.combine(record.date, launch_end_time) - datetime.datetime.combine(record.date, launch_start_time)).total_seconds() / 60
 
-        net_work_minutes = max(0, total_duration_minutes - launch_minutes)
+        except (ValueError, TypeError):
+            launch_minutes = 0 # Default to 0 if config is invalid
+        record.launch_duration_minutes = int(launch_minutes)
 
+        net_work_minutes = max(0, total_duration_minutes - launch_minutes - leave_minutes)
+
+        # Tardiness Calculation
         late_threshold_str = config.settings.get("late_threshold_time", "10:00")
         try:
             hour, minute = map(int, late_threshold_str.split(':'))
             late_threshold_dt = dt_in.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        except ValueError:
-            late_threshold_dt = dt_in.replace(hour=10, minute=0, second=0, microsecond=0)
+            record.tardiness_minutes = max(0, int((dt_in - late_threshold_dt).total_seconds() / 60))
+        except (ValueError, TypeError):
+            record.tardiness_minutes = 0
 
-        record.tardiness_minutes = max(0, int((dt_in - late_threshold_dt).total_seconds() / 60))
-
+        # Overtime Calculation
         workday_minutes = config.settings.get("workday_hours", 8) * 60
-        official_end_dt = dt_in + datetime.timedelta(minutes=(workday_minutes + launch_minutes))
-
-        overtime_minutes = 0
-        if dt_out > official_end_dt:
-            overtime_minutes = int((dt_out - official_end_dt).total_seconds() / 60)
+        overtime_minutes = max(0, net_work_minutes - workday_minutes)
         record.overtime_minutes = overtime_minutes
-
         record.main_work_minutes = max(0, net_work_minutes - overtime_minutes)
 
     def add_manual_attendance(self, db: Optional[Session] = None, **kwargs) -> Attendance:
@@ -180,11 +117,6 @@ class AttendanceService:
             for key, value in kwargs.items():
                 if hasattr(record, key): setattr(record, key, value)
             
-            if 'time_in' in kwargs: record.time_in = kwargs['time_in']
-            if 'time_out' in kwargs: record.time_out = kwargs['time_out']
-            if 'launch_start' in kwargs: record.launch_start = kwargs['launch_start']
-            if 'launch_end' in kwargs: record.launch_end = kwargs['launch_end']
-
             self._calculate_all_fields(record)
             db.commit()
             db.refresh(record)
@@ -221,27 +153,7 @@ class AttendanceService:
             return query.order_by(Attendance.date.desc(), Employee.last_name).all()
         finally:
             if managed: db.close()
-
-    def get_daily_summary(self, target_date: datetime.date, db: Optional[Session] = None) -> dict:
-        managed = db is None
-        db = db or self._get_session()
-        try:
-            # Get all employees
-            total_employees = db.query(Employee).count()
-            
-            # Get employees present on the target date
-            present_count = db.query(Attendance).filter(
-                and_(
-                    Attendance.date == target_date,
-                    Attendance.status == self.STATUS_PRESENT
-                )
-            ).count()
-
-            absent_count = total_employees - present_count
-            return {"present": present_count, "absent": max(0, absent_count)} # Ensure absent is not negative
-        finally:
-            if managed: db.close()
-
+    
     def get_attendance_for_export(self, db: Optional[Session] = None, **filters) -> List[Dict]:
         needs_closing = db is None
         db = db or self._get_session()
@@ -250,26 +162,16 @@ class AttendanceService:
             return [{
                 "Employee Name": f"{r.employee.first_name} {r.employee.last_name}".strip(),
                 "Date": r.date, "Time In": r.time_in, "Time Out": r.time_out,
-                "Tardiness (min)": r.tardiness_minutes, "Main Work (min)": r.main_work_minutes,
-                "Overtime (min)": r.overtime_minutes, "Launch Time (min)": r.launch_duration_minutes,
+                "Leave (min)": r.leave_duration_minutes, # Added Leave
+                "Tardiness (min)": r.tardiness_minutes, 
+                "Main Work (min)": r.main_work_minutes,
+                "Overtime (min)": r.overtime_minutes, 
+                "Launch Time (min)": r.launch_duration_minutes,
                 "Total Duration (min)": r.duration_minutes,
                 "Status": r.status,
                 "Note": r.note or "",
             } for r in records]
         finally:
             if needs_closing: db.close()
-            
-    def get_archived_attendance_records(self, db: Optional[Session] = None, **filters) -> List[Attendance]:
-        managed = db is None
-        db = db or self._get_session()
-        try:
-            query = db.query(Attendance).options(joinedload(Attendance.employee)).filter(Attendance.is_archived == True)
-            if filters.get('employee_id'): query = query.filter(Attendance.employee_id == filters['employee_id'])
-            if filters.get('start_date'): query = query.filter(Attendance.date >= filters['start_date'])
-            if filters.get('end_date'): query = query.filter(Attendance.date <= filters['end_date'])
-            return query.order_by(Attendance.date.desc()).all()
-        finally:
-            if managed: db.close()
 
-# Global instance
 attendance_service = AttendanceService()

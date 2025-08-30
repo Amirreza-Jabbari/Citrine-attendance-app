@@ -17,10 +17,10 @@ DEFAULT_SETTINGS = {
     "backup_retention_count": 10, # Keep last 10 backups
     "db_path_override": None, # Use default if None
     "enable_backup_encryption": False,
-    "default_launch_time_minutes": 60, # New: Default lunch time in minutes
-    "workday_hours": 8, # New: Standard work hours in a day
-    "late_threshold_time": "10:00", # New: Time after which an employee is considered late
-    # Add more settings as needed
+    "default_launch_start_time": "12:30", # New: Default launch start time
+    "default_launch_end_time": "13:30",   # New: Default launch end time
+    "workday_hours": 8,
+    "late_threshold_time": "10:00",
 }
 
 class AppConfig:
@@ -40,9 +40,8 @@ class AppConfig:
         ]
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
-            # Basic permission setting (consider more robust methods for production)
             try:
-                os.chmod(directory, 0o700) # Read, write, execute for owner only
+                os.chmod(directory, 0o700)
             except Exception as e:
                 logging.warning(f"Could not set permissions on {directory}: {e}")
 
@@ -58,14 +57,13 @@ class AppConfig:
             try:
                 with open(self.settings_file, 'r', encoding='utf-8') as f:
                     loaded_settings = json.load(f)
-                    # Merge with defaults to handle missing keys in loaded file
                     self.settings = {**DEFAULT_SETTINGS, **loaded_settings}
             except (json.JSONDecodeError, IOError) as e:
                 logging.error(f"Error loading settings: {e}. Using defaults.")
                 self.settings = DEFAULT_SETTINGS.copy()
         else:
             self.settings = DEFAULT_SETTINGS.copy()
-            self.save_settings() # Save defaults if file doesn't exist
+            self.save_settings()
 
     def save_settings(self):
         """Save current settings to file."""
@@ -77,16 +75,11 @@ class AppConfig:
 
     def update_setting(self, key, value):
         """Update a setting and save."""
-        if key in self.settings:
+        if key in self.settings or key in DEFAULT_SETTINGS:
             self.settings[key] = value
             self.save_settings()
         else:
-            # If key is not in self.settings but is in DEFAULT_SETTINGS, add it
-            if key in DEFAULT_SETTINGS:
-                self.settings[key] = value
-                self.save_settings()
-            else:
-                logging.warning(f"Attempted to update unknown setting key: {key}")
+            logging.warning(f"Attempted to update unknown setting key: {key}")
 
 
 # Global config instance
