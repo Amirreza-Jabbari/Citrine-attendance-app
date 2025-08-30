@@ -11,7 +11,8 @@ from PyQt6.QtGui import QKeyEvent, QFontDatabase, QIcon, QAction
 
 from ...services.user_service import user_service, InvalidCredentialsError
 from ...config import APP_NAME, APP_AUTHOR
-from ...utils.resources import get_font_path, get_icon_path  # For loading icons and fonts
+from ...utils.resources import get_font_path, get_icon_path
+from ...locale import _, translator # Import the translator
 
 # Define keys for QSettings
 SETTINGS_REMEMBER_ME = "login/remember_me"
@@ -25,12 +26,16 @@ class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.logger = logging.getLogger(__name__)
-        self.setWindowTitle("Login - Citrine Attendance")
+        self.setWindowTitle(_("login_title"))
         self.setModal(True)
-        self.setFixedSize(400, 480)  # Adjusted size for the new design
+        self.setFixedSize(400, 480)
 
         self.current_user = None
         self.settings = QSettings(APP_AUTHOR, APP_NAME)
+        
+        # Set layout direction based on language
+        if translator.language == "fa":
+            self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         
         self.load_custom_font()
         self.init_ui()
@@ -53,7 +58,6 @@ class LoginDialog(QDialog):
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
-        # Main container for styling
         container = QWidget(self)
         container.setObjectName("container")
         layout = QVBoxLayout(container)
@@ -61,54 +65,47 @@ class LoginDialog(QDialog):
         layout.setSpacing(15)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # --- Title ---
-        title_label = QLabel("Citrine Attendance")
+        title_label = QLabel(_("login_header"))
         title_label.setObjectName("titleLabel")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title_label)
 
-        # --- Subtitle ---
-        subtitle_label = QLabel("Please log in to continue")
+        subtitle_label = QLabel(_("login_subtitle"))
         subtitle_label.setObjectName("subtitleLabel")
         subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle_label)
         layout.addSpacing(20)
 
-        # --- Username Input ---
         self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("Username")
+        self.username_input.setPlaceholderText(_("username"))
         self.username_input.setObjectName("inputField")
         self.add_icon_to_input(self.username_input, "user.svg")
         layout.addWidget(self.username_input)
 
-        # --- Password Input ---
         self.password_input = QLineEdit()
-        self.password_input.setPlaceholderText("Password")
+        self.password_input.setPlaceholderText(_("password"))
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setObjectName("inputField")
         self.add_icon_to_input(self.password_input, "lock.svg")
         self.setup_password_visibility_toggle()
         layout.addWidget(self.password_input)
         
-        # --- Options (Remember Me) ---
         options_layout = QHBoxLayout()
-        self.remember_checkbox = QCheckBox("Remember my username")
+        self.remember_checkbox = QCheckBox(_("remember_me"))
         self.remember_checkbox.setObjectName("rememberCheckbox")
         options_layout.addWidget(self.remember_checkbox)
         options_layout.addStretch()
         layout.addLayout(options_layout)
         layout.addSpacing(10)
 
-        # --- Login Button ---
-        self.login_button = QPushButton("Login")
+        self.login_button = QPushButton(_("login"))
         self.login_button.setObjectName("loginButton")
         self.login_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.login_button.clicked.connect(self.handle_login)
         self.login_button.setDefault(True)
         layout.addWidget(self.login_button)
 
-        # --- Cancel Button ---
-        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button = QPushButton(_("cancel"))
         self.cancel_button.setObjectName("cancelButton")
         self.cancel_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_button.clicked.connect(self.reject)
@@ -123,9 +120,15 @@ class LoginDialog(QDialog):
             icon_action = QAction(line_edit)
             icon_path = str(get_icon_path(icon_name))
             icon_action.setIcon(QIcon(icon_path))
-            line_edit.addAction(icon_action, QLineEdit.ActionPosition.LeadingPosition)
-            # Adjust left padding to make space for the icon, keeping other padding values
-            line_edit.setStyleSheet("padding-left: 35px; padding-top: 12px; padding-bottom: 12px; padding-right: 15px;")
+            
+            action_position = QLineEdit.ActionPosition.LeadingPosition
+            padding_style = "padding-left: 35px; padding-right: 15px;"
+            if self.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+                action_position = QLineEdit.ActionPosition.TrailingPosition
+                padding_style = "padding-left: 15px; padding-right: 35px;"
+
+            line_edit.addAction(icon_action, action_position)
+            line_edit.setStyleSheet(f"{padding_style} padding-top: 12px; padding-bottom: 12px;")
         except Exception as e:
             self.logger.error(f"Could not add icon '{icon_name}': {e}. Ensure icons exist.")
 
@@ -136,7 +139,12 @@ class LoginDialog(QDialog):
             self.toggle_password_action.setIcon(QIcon(str(get_icon_path("eye-off.svg"))))
             self.toggle_password_action.setCursor(Qt.CursorShape.PointingHandCursor)
             self.toggle_password_action.triggered.connect(self.toggle_password_visibility)
-            self.password_input.addAction(self.toggle_password_action, QLineEdit.ActionPosition.TrailingPosition)
+            
+            action_position = QLineEdit.ActionPosition.TrailingPosition
+            if self.layoutDirection() == Qt.LayoutDirection.RightToLeft:
+                action_position = QLineEdit.ActionPosition.LeadingPosition
+
+            self.password_input.addAction(self.toggle_password_action, action_position)
         except Exception as e:
             self.logger.error(f"Could not set up password visibility toggle: {e}. Ensure icons exist.")
 
@@ -175,7 +183,7 @@ class LoginDialog(QDialog):
                 color: #ecf0f1;
                 border: 1px solid #2c3e50;
                 border-radius: 8px;
-                padding: 12px 15px;
+                /* Padding is now handled by add_icon_to_input */
                 font-size: 14px;
             }
             QLineEdit#inputField:focus {
@@ -254,7 +262,7 @@ class LoginDialog(QDialog):
         password = self.password_input.text()
 
         if not username or not password:
-            QMessageBox.warning(self, "Login Failed", "Please enter both username and password.")
+            QMessageBox.warning(self, _("login_failed"), _("login_enter_credentials"))
             return
 
         try:
@@ -266,17 +274,16 @@ class LoginDialog(QDialog):
                 self.login_successful.emit(user)
                 self.accept()
             else:
-                # This path might not be reached if authenticate_user always raises on failure
-                raise InvalidCredentialsError("Invalid username or password.")
+                raise InvalidCredentialsError(_("invalid_credentials"))
 
         except InvalidCredentialsError:
             self.logger.warning(f"Failed login attempt for username '{username}'.")
-            QMessageBox.critical(self, "Login Failed", "Invalid username or password.")
+            QMessageBox.critical(self, _("login_failed"), _("invalid_credentials"))
             self.password_input.clear()
             self.username_input.setFocus()
         except Exception as e:
             self.logger.error(f"Unexpected error during login for '{username}': {e}", exc_info=True)
-            QMessageBox.critical(self, "Login Error", f"An unexpected error occurred: {e}")
+            QMessageBox.critical(self, _("login_error"), _("unexpected_error", error=e))
 
     def keyPressEvent(self, event: QKeyEvent):
         """Handle Enter/Return key press to trigger login."""
@@ -289,31 +296,29 @@ class LoginDialog(QDialog):
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     
+    # --- HERO IMPLEMENTATION: Set language to Persian for testing ---
+    translator.set_language("fa")
+    
     # Mock user service for standalone testing
     class MockUserService:
         def authenticate_user(self, username, password):
             if username == "admin" and password == "admin":
-                # Create a mock user object
                 user = type('User', (object,), {'username': 'admin', 'role': 'Administrator'})()
                 return user
-            raise InvalidCredentialsError("Invalid credentials")
+            raise InvalidCredentialsError(_("invalid_credentials"))
 
     user_service = MockUserService()
     
-    # Mock resources.py functions for standalone testing
     def get_icon_path(icon_name):
-        # In a real run, this would point to your resources folder
         return f"./{icon_name}"
     
     def get_font_path(font_name):
         return f"./{font_name}"
 
-    print("Running login dialog test...")
-    print("NOTE: Icons will not appear unless you create the required .svg files in the same directory.")
+    print("Running login dialog test in Persian...")
     
     login_dialog = LoginDialog()
     
-    # Connect the signal to a simple function for testing
     def on_login(user):
         print(f"Login successful signal received for user: {user.username}")
 
@@ -325,4 +330,3 @@ if __name__ == '__main__':
         print("Login cancelled or failed.")
     
     sys.exit(app.exec())
-

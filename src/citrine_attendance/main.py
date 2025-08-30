@@ -6,22 +6,17 @@ and launches the PyQt6 GUI.
 """
 import sys
 import logging
-# Import our internal modules
-# Adjust import path if necessary, assuming this file is run as a module
-# e.g., `python -m src.citrine_attendance.main`
-# Import database first to ensure init_db defines engine/session
-from . import database
-from .config import config
-# Now import engine, SessionLocal, User *after* database module is processed
-from .database import engine, SessionLocal, User
-from .services.employee_service import employee_service
-from .services.user_service import user_service
-from .services.attendance_service import attendance_service
-# Import security utility
-from .utils.security import hash_password
-from .locale import translator
 from PyQt6.QtCore import Qt
 
+# --- CORRECTED: Use absolute imports from the package root ---
+from citrine_attendance import database
+from citrine_attendance.config import config
+from citrine_attendance.database import engine, SessionLocal, User
+from citrine_attendance.services.employee_service import employee_service
+from citrine_attendance.services.user_service import user_service
+from citrine_attendance.services.attendance_service import attendance_service
+from citrine_attendance.utils.security import hash_password
+from citrine_attendance.locale import translator
 
 # --- Logging Setup ---
 def setup_logging():
@@ -54,30 +49,23 @@ def create_default_admin():
     Creates a default 'admin' user with password 'admin123' if no users exist.
     This should only run on the very first startup.
     """
-    # --- ROBUST CHECK: Ensure the database engine is initialized ---
-    # Access the engine directly from the database module namespace
     if not hasattr(database, 'engine') or database.engine is None:
-        # Log to root logger as __main__ logger might not be set up in this specific context if called early
         logging.getLogger().error("Database engine is not initialized. Cannot create default admin.")
         print("Error: Database engine is not initialized. Cannot create default admin user.")
         return
 
-    # Use SessionLocal from the database module
     db_session = database.SessionLocal()
     try:
-        # Check if any users exist in the database
         user_count = db_session.query(User).count()
 
         if user_count == 0:
             default_username = "admin"
-            default_password = "admin123" # MUST be changed by the user immediately
-            # Log to root logger for consistency during startup
+            default_password = "admin123"
             logging.getLogger().warning(
                 f"No existing users found. Creating default admin user: "
                 f"Username: '{default_username}', Password: '{default_password}'. "
                 f"*** CHANGE THIS PASSWORD IMMEDIATELY AFTER FIRST LOGIN ***"
             )
-            # --- IMPORTANT: Inform the user on the console as well ---
             print("\n" + "="*60)
             print("SECURITY ALERT: DEFAULT ADMIN USER CREATED!")
             print(f"Username: {default_username}")
@@ -85,16 +73,12 @@ def create_default_admin():
             print("*** CHANGE THIS PASSWORD IMMEDIATELY AFTER FIRST LOGIN ***")
             print("="*60 + "\n")
 
-            # Hash the default password securely
             hashed_pw = hash_password(default_password)
-
-            # Create the User object
             admin_user = User(
                 username=default_username,
                 password_hash=hashed_pw,
                 role="admin"
             )
-            # Add and commit to the database
             db_session.add(admin_user)
             db_session.commit()
             logging.getLogger().info(f"Default admin user '{default_username}' created successfully.")
@@ -104,10 +88,7 @@ def create_default_admin():
     except Exception as e:
         logging.getLogger().error(f"Error during default admin user creation/check: {e}", exc_info=True)
         print(f"Warning: An error occurred while checking/creating the default admin user. See logs for details.")
-        # Depending on policy, you might want to exit here if this is critical
-        # sys.exit(1)
     finally:
-        # Ensure the database session is closed
         db_session.close()
 
 
@@ -115,67 +96,52 @@ def create_default_admin():
 def main():
     """
     Main function to initialize the Citrine Attendance application.
-    This includes setting up logging, the database, default user,
-    and launches the PyQt6 GUI.
     """
     print("Initializing Citrine Attendance App...")
 
-    # 1. Setup logging first to capture any initialization messages
+    # 1. Setup logging
     setup_logging()
-    # Use a specific logger for main
     logger = logging.getLogger(__name__)
     logger.info("Starting Citrine Attendance application.")
 
-    # 2. Initialize the database connection and create tables if they don't exist
+    # 2. Initialize the database
     try:
-        # Call init_db from the database module to ensure engine is set
         database.init_db()
         logger.info("Database initialized successfully.")
     except Exception as e:
         logger.critical(f"Failed to initialize the database: {e}", exc_info=True)
         print(f"Critical Error: Could not initialize the database. See logs for details.")
-        sys.exit(1) # Exit the application if the database cannot be initialized
+        sys.exit(1)
 
-    # 3. Create the default admin user if the users table is empty
-    # Ensure this runs AFTER database.init_db() has been called
+    # 3. Create the default admin user if needed
     try:
         create_default_admin()
     except Exception as e:
         logger.error(f"Error ensuring default admin user exists: {e}", exc_info=True)
         print(f"Warning: Could not check or create the default admin user. See logs for details.")
-        # Depending on requirements, you might choose to exit here if this step is mandatory
-        # sys.exit(1)
 
-    # 4. --- Phase 3: Launch the PyQt6 GUI ---
+    # 4. Launch the PyQt6 GUI
     logger.info("Initializing PyQt6 GUI...")
     try:
-        # Import PyQt6 modules *after* core setup.
         from PyQt6.QtWidgets import QApplication
+        # --- CORRECTED: Use absolute import for MainWindow ---
+        from citrine_attendance.ui.main_window import MainWindow
 
-        # Import the main window class
-        from .ui.main_window import MainWindow
-
-        # Ensure only one QApplication instance exists.
         app = QApplication.instance()
         if app is None:
             app = QApplication(sys.argv)
             logger.debug("Created new QApplication instance.")
 
-        # Set language and layout direction
         translator.set_language(config.settings.get("language", "en"))
         if config.settings.get("language") == "fa":
             app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         else:
             app.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-
-        # --- Create the Main Application Window ---
-        # The MainWindow constructor handles login and showing itself
-        window = MainWindow() # This starts the login flow and sets up the UI asynchronously
-        # Do NOT call window.show() here anymore.
+        
+        # The MainWindow constructor handles the entire application flow
+        window = MainWindow() 
 
         logger.info("Main application window initialization started. Starting GUI event loop.")
-
-        # --- Start the Qt Event Loop ---
         exit_code = app.exec()
         logger.info(f"GUI event loop finished with exit code: {exit_code}")
         sys.exit(exit_code)
@@ -189,6 +155,7 @@ def main():
         print(f"Critical Error: Failed to start or run the application GUI. See logs for details.")
         sys.exit(1)
 
-
+# This check is now mainly for direct testing of this file,
+# but the application should be started via run.py
 if __name__ == "__main__":
     main()
