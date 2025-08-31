@@ -114,7 +114,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.setContentsMargins(10, 15, 10, 10)
         sidebar_layout.setSpacing(5)
         
-        title_label = QLabel("Citrine")
+        title_label = QLabel(_("company_name"))
         title_label.setObjectName("sidebarTitle")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sidebar_layout.addWidget(title_label)

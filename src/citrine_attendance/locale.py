@@ -3,9 +3,10 @@
 
 TRANSLATIONS = {
     "en": {
-        "app_title": "Citrine Attendance",
-        "login_title": "Login - Citrine Attendance",
-        "login_header": "Citrine Attendance",
+        "app_title": "Zarsaham Attendance",
+        "company_name": "Zarsaham",
+        "login_title": "Login - Zarsaham Attendance",
+        "login_header": "Zarsaham Attendance",
         "login_subtitle": "Please log in to continue",
         "username": "Username",
         "password": "Password",
@@ -17,7 +18,7 @@ TRANSLATIONS = {
         "invalid_credentials": "Invalid username or password.",
         "login_enter_credentials": "Please enter both username and password.",
         "unexpected_error": "An unexpected error occurred: {error}",
-        "main_window_title": "Citrine Attendance",
+        "main_window_title": "Zarsaham Attendance",
         "status_ready": "Ready",
         "status_initializing": "Initializing...",
         "view_dashboard": "Dashboard",
@@ -182,9 +183,10 @@ TRANSLATIONS = {
         "settings_error_loading_audit_log": "Error loading audit log: {error}",
     },
     "fa": {
-        "app_title": "سیترینو - حضور و غیاب",
-        "login_title": "ورود - سیترینو",
-        "login_header": "سیترینو - حضور و غیاب",
+        "app_title": "زرسهام - حضور و غیاب",
+        "company_name": "زرسهام",
+        "login_title": "ورود - زرسهام",
+        "login_header": "زرسهام - حضور و غیاب",
         "login_subtitle": "لطفا برای ادامه وارد شوید",
         "username": "نام کاربری",
         "password": "رمز عبور",
@@ -196,7 +198,7 @@ TRANSLATIONS = {
         "invalid_credentials": "نام کاربری یا رمز عبور نامعتبر است.",
         "login_enter_credentials": "لطفا نام کاربری و رمز عبور را وارد کنید.",
         "unexpected_error": "خطای غیرمنتظره: {error}",
-        "main_window_title": "سیترینو - حضور و غیاب",
+        "main_window_title": "زرسهام - حضور و غیاب",
         "status_ready": "آماده",
         "status_initializing": "در حال آماده سازی...",
         "view_dashboard": "داشبورد",
@@ -361,6 +363,8 @@ TRANSLATIONS = {
         "settings_error_loading_audit_log": "خطا در بارگیری گزارش حسابرسی: {error}",
         "attendance_launch_start": "شروع ناهار:",
         "attendance_launch_end": "پایان ناهار:",
+        "dashboard_title": "پنل داشبورد",
+        "employee_view_title": "مدیریت کارمندان",
     },
 }
 
