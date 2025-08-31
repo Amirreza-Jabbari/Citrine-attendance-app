@@ -16,14 +16,14 @@ class NotClockedInError(AttendanceServiceError): pass
 class AttendanceService:
     STATUS_PRESENT = "present"
     STATUS_ABSENT = "absent"
-    STATUS_ON_LEAVE = "on_leave" # New status
+    STATUS_ON_LEAVE = "on_leave"
     STATUS_DISPLAY = {"present": "Present", "absent": "Absent", "on_leave": "On Leave"}
 
     def _get_session(self) -> Session:
         return next(get_db_session())
 
     def _calculate_all_fields(self, record: Attendance):
-        """Calculates all derived time fields for an attendance record."""
+        """Calculates all derived time fields for an attendance record based on the new logic."""
         # Reset all calculated fields
         record.duration_minutes = None
         record.launch_duration_minutes = None
@@ -33,7 +33,7 @@ class AttendanceService:
         record.overtime_minutes = None
         record.status = self.STATUS_ABSENT
 
-        # Calculate leave duration first
+        # Calculate leave duration
         leave_minutes = 0
         if record.leave_start and record.leave_end and record.leave_end > record.leave_start:
             leave_dt_start = datetime.datetime.combine(record.date, record.leave_start)
@@ -41,56 +41,78 @@ class AttendanceService:
             leave_minutes = int((leave_dt_end - leave_dt_start).total_seconds() / 60)
         record.leave_duration_minutes = leave_minutes
 
-        # Determine status based on presence and leave
+        # Determine status
         if record.time_in:
             record.status = self.STATUS_PRESENT
         if leave_minutes > 0 and not record.time_in:
             record.status = self.STATUS_ON_LEAVE
 
-        # Stop if there's no time_in/time_out range
-        if not (record.time_in and record.time_out and record.time_out > record.time_in):
+        # Stop if there's no time_in
+        if not record.time_in:
             return
 
         dt_in = datetime.datetime.combine(record.date, record.time_in)
-        dt_out = datetime.datetime.combine(record.date, record.time_out)
-
-        total_duration_minutes = int((dt_out - dt_in).total_seconds() / 60)
-        record.duration_minutes = total_duration_minutes
-        
-        # Calculate launch time based on settings
-        launch_minutes = 0
-        try:
-            start_str = config.settings.get("default_launch_start_time", "12:30")
-            end_str = config.settings.get("default_launch_end_time", "13:30")
-            h_start, m_start = map(int, start_str.split(':'))
-            h_end, m_end = map(int, end_str.split(':'))
-            launch_start_time = datetime.time(h_start, m_start)
-            launch_end_time = datetime.time(h_end, m_end)
-            
-            # Check if the work period overlaps with launch time
-            if record.time_in < launch_end_time and record.time_out > launch_start_time:
-                 launch_minutes = (datetime.datetime.combine(record.date, launch_end_time) - datetime.datetime.combine(record.date, launch_start_time)).total_seconds() / 60
-
-        except (ValueError, TypeError):
-            launch_minutes = 0 # Default to 0 if config is invalid
-        record.launch_duration_minutes = int(launch_minutes)
-
-        net_work_minutes = max(0, total_duration_minutes - launch_minutes - leave_minutes)
 
         # Tardiness Calculation
         late_threshold_str = config.settings.get("late_threshold_time", "10:00")
         try:
             hour, minute = map(int, late_threshold_str.split(':'))
             late_threshold_dt = dt_in.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            record.tardiness_minutes = max(0, int((dt_in - late_threshold_dt).total_seconds() / 60))
+            if dt_in > late_threshold_dt:
+                record.tardiness_minutes = int((dt_in - late_threshold_dt).total_seconds() / 60)
+            else:
+                record.tardiness_minutes = 0
         except (ValueError, TypeError):
             record.tardiness_minutes = 0
+        
+        tardiness_minutes = record.tardiness_minutes or 0
 
-        # Overtime Calculation
+        # Stop if there's no time_out
+        if not (record.time_out and record.time_out > record.time_in):
+            return
+
+        dt_out = datetime.datetime.combine(record.date, record.time_out)
+
+        total_duration_minutes = int((dt_out - dt_in).total_seconds() / 60)
+        record.duration_minutes = total_duration_minutes
+        
+        # Launch time calculation
+        launch_minutes = 0
+        try:
+            start_str = config.settings.get("default_launch_start_time", "14:00")
+            end_str = config.settings.get("default_launch_end_time", "16:00")
+            h_start, m_start = map(int, start_str.split(':'))
+            h_end, m_end = map(int, end_str.split(':'))
+            launch_start_time = datetime.time(h_start, m_start)
+            launch_end_time = datetime.time(h_end, m_end)
+            
+            # Check for overlap
+            if record.time_in < launch_end_time and record.time_out > launch_start_time:
+                launch_start_dt = datetime.datetime.combine(record.date, launch_start_time)
+                launch_end_dt = datetime.datetime.combine(record.date, launch_end_time)
+                
+                overlap_start = max(dt_in, launch_start_dt)
+                overlap_end = min(dt_out, launch_end_dt)
+                
+                if overlap_end > overlap_start:
+                    launch_minutes = (overlap_end - overlap_start).total_seconds() / 60
+
+        except (ValueError, TypeError):
+            launch_minutes = 0 
+        record.launch_duration_minutes = int(launch_minutes)
+
+        net_work_minutes = max(0, total_duration_minutes - launch_minutes - leave_minutes)
+
+        # Main Work and Overtime Calculation (New Logic)
         workday_minutes = config.settings.get("workday_hours", 8) * 60
-        overtime_minutes = max(0, net_work_minutes - workday_minutes)
+        
+        # The sum of tardiness and main work must be 8 hours.
+        main_work_minutes = max(0, workday_minutes - tardiness_minutes)
+        record.main_work_minutes = main_work_minutes
+        
+        overtime_minutes = max(0, net_work_minutes - main_work_minutes)
         record.overtime_minutes = overtime_minutes
-        record.main_work_minutes = max(0, net_work_minutes - overtime_minutes)
+
 
     def add_manual_attendance(self, db: Optional[Session] = None, **kwargs) -> Attendance:
         managed = db is None
@@ -152,7 +174,6 @@ class AttendanceService:
             if filters.get('start_date'): query = query.filter(Attendance.date >= filters['start_date'])
             if filters.get('end_date'): query = query.filter(Attendance.date <= filters['end_date'])
             if filters.get('statuses'): query = query.filter(Attendance.status.in_(filters['statuses']))
-            # Assuming an 'is_archived' field exists in the Attendance model
             query = query.filter(Attendance.is_archived == False)
             return query.order_by(Attendance.date.desc(), Employee.last_name).all()
         finally:
@@ -167,7 +188,6 @@ class AttendanceService:
             if filters.get('start_date'): query = query.filter(Attendance.date >= filters['start_date'])
             if filters.get('end_date'): query = query.filter(Attendance.date <= filters['end_date'])
             if filters.get('statuses'): query = query.filter(Attendance.status.in_(filters['statuses']))
-            # Assuming an 'is_archived' field exists in the Attendance model
             query = query.filter(Attendance.is_archived == True)
             return query.order_by(Attendance.date.desc(), Employee.last_name).all()
         finally:
@@ -194,7 +214,7 @@ class AttendanceService:
             return [{
                 "Employee Name": f"{r.employee.first_name} {r.employee.last_name}".strip(),
                 "Date": r.date, "Time In": r.time_in, "Time Out": r.time_out,
-                "Leave (min)": r.leave_duration_minutes, # Added Leave
+                "Leave (min)": r.leave_duration_minutes,
                 "Tardiness (min)": r.tardiness_minutes, 
                 "Main Work (min)": r.main_work_minutes,
                 "Overtime (min)": r.overtime_minutes, 
@@ -266,7 +286,6 @@ class AttendanceService:
         try:
             present_count = db.query(Attendance).filter(and_(Attendance.date == date, Attendance.status == self.STATUS_PRESENT)).count()
             
-            # Absent is total employees minus present
             total_employees = db.query(Employee).count()
             absent_count = total_employees - present_count
             
