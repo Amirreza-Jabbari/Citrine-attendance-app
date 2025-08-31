@@ -50,12 +50,12 @@ class ExportService:
             for key in ["Time In", "Time Out"]:
                 time_val = processed_row.get(key)
                 if isinstance(time_val, datetime.time):
-                    processed_row[key] = time_val.strftime("%H:M")
+                    processed_row[key] = time_val.strftime("%H:%M")
 
             # --- Convert all minute fields to HH:MM strings and update headers ---
             minute_keys = [
                 "Tardiness (min)", "Main Work (min)", "Overtime (min)", 
-                "Launch Time (min)", "Total Duration (min)"
+                "Launch Time (min)", "Total Duration (min)", "Leave (min)"
             ]
             for key in minute_keys:
                 if key in processed_row:

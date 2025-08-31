@@ -14,6 +14,7 @@ from ...services.employee_service import employee_service
 from ...services.export_service import export_service, ExportServiceError
 from ...database import get_db_session
 from ...locale import _, translator
+from ...utils.time_utils import minutes_to_hhmm
 
 
 class ReportsView(QWidget):
@@ -33,6 +34,7 @@ class ReportsView(QWidget):
             "Time Out": "report_header_time_out",
             "Status": "report_header_status",
             "Tardiness (min)": "report_header_tardiness",
+            "Leave (min)": "report_header_leave",
             "Main Work (min)": "report_header_main_work",
             "Overtime (min)": "report_header_overtime",
             "Launch Time (min)": "report_header_launch_time",
@@ -174,8 +176,16 @@ class ReportsView(QWidget):
         if not self.last_generated_data:
             return
 
+        # HEROIC FIX: Update headers to show H:M format and format minute values
         headers = [_(self.column_map.get(key, key)) for key in self.column_map.keys()]
-        self.preview_model.setHorizontalHeaderLabels(headers)
+        # Smartly replace minute indicators in headers for both languages
+        processed_headers = [h.replace("(min)", "(H:M)").replace("(دقیقه)", "(س:د)") for h in headers]
+        self.preview_model.setHorizontalHeaderLabels(processed_headers)
+
+        minute_columns = [
+            "Tardiness (min)", "Leave (min)", "Main Work (min)", "Overtime (min)",
+            "Launch Time (min)", "Total Duration (min)"
+        ]
 
         for row_data in self.last_generated_data:
             row_items = []
@@ -183,8 +193,11 @@ class ReportsView(QWidget):
                 value = row_data.get(original_key)
                 
                 # Translate status values before formatting
-                if original_key == "Status" and value in ["present", "absent"]:
+                if original_key == "Status" and value in ["present", "absent", "on_leave"]:
                     display_value = _(value)
+                # Format all minute-based columns to H:M
+                elif original_key in minute_columns:
+                    display_value = minutes_to_hhmm(value)
                 else:
                     # Format everything else for display
                     display_value = self._format_cell_value(value)
@@ -227,7 +240,7 @@ class ReportsView(QWidget):
                     value = row.get(original_key)
 
                     # Logic to determine the final value for the export file
-                    if original_key == "Status" and value in ["present", "absent"]:
+                    if original_key == "Status" and value in ["present", "absent", "on_leave"]:
                         # Translate status text
                         final_value = _(value)
                     elif isinstance(value, time):
