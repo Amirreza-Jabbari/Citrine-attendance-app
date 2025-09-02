@@ -1,6 +1,6 @@
 import jdatetime
 import datetime
-from typing import Union
+from typing import Union, Tuple
 
 # --- Date Conversion Utilities ---
 def gregorian_to_jalali(greg_date: Union[datetime.date, datetime.datetime]) -> jdatetime.date:
@@ -77,3 +77,33 @@ def format_date_for_display(gregorian_date: Union[datetime.date, datetime.dateti
         jalali_part = format_jalali_date(jalali_date_obj, include_time=isinstance(gregorian_date, datetime.datetime), gregorian_dt=greg_dt_obj)
         iso_part = format_gregorian_date_iso(gregorian_date)
         return f"{jalali_part} — {iso_part}"
+
+# HEROIC FIX: New function to get Jalali month range starting from day 29
+def get_jalali_month_range(gregorian_date: datetime.date) -> Tuple[datetime.date, datetime.date]:
+    """
+    Calculates the start and end date of a Jalali month, considering the start day as 29.
+    The range is from day 29 of the previous Jalali month to day 28 of the current Jalali month.
+    """
+    jalali_today = gregorian_to_jalali(gregorian_date)
+
+    # Determine the start of the current period
+    if jalali_today.day >= 29:
+        # We are in the new month period that started on day 29
+        start_jalali = jdatetime.date(jalali_today.year, jalali_today.month, 29)
+    else:
+        # We are in the month period that started in the previous month
+        prev_month = jalali_today.month - 1
+        prev_year = jalali_today.year
+        if prev_month == 0:
+            prev_month = 12
+            prev_year -= 1
+        start_jalali = jdatetime.date(prev_year, prev_month, 29)
+
+    # Determine the end of the current period
+    end_jalali = start_jalali + jdatetime.timedelta(days=29) # Next month's 28th
+
+    # Convert back to Gregorian for database queries
+    start_gregorian = start_jalali.togregorian()
+    end_gregorian = end_jalali.togregorian()
+
+    return start_gregorian, end_gregorian

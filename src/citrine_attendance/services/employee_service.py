@@ -56,6 +56,19 @@ class EmployeeService:
             if managed_session:
                 db.close()
 
+    def get_employee_by_email(self, email: str, db: Session = None) -> Optional[Employee]:
+        """Retrieve an employee by their email."""
+        if db is None:
+            db = self._get_session()
+            managed_session = True
+        else:
+            managed_session = False
+        try:
+            return db.query(Employee).filter(Employee.email == email).first()
+        finally:
+            if managed_session:
+                db.close()
+
     def create_employee(self, first_name: str, email: str, last_name: str = None,
                         phone: str = None, notes: str = None,
                         employee_id: str = None, monthly_leave_allowance_hours: int = 0,

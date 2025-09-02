@@ -3,10 +3,11 @@ import logging
 from typing import List, Optional
 
 from PyQt6.QtCore import QAbstractTableModel, Qt, QModelIndex, QVariant
+from PyQt6.QtGui import QColor
 
 from ...services.attendance_service import attendance_service, AttendanceServiceError
 from ...database import Attendance
-from ...date_utils import format_date_for_display
+from ...date_utils import format_date_for_display, get_jalali_month_range
 from ...utils.time_utils import minutes_to_hhmm
 from ...locale import _
 
@@ -78,17 +79,16 @@ class AttendanceTableModel(QAbstractTableModel):
                 for r in records if r.employee
             }
 
-            # HEROIC FIX: Pre-calculate monthly leave totals for all relevant months
-            months_to_calc = set()
-            for r in records:
-                months_to_calc.add((r.employee_id, r.date.year, r.date.month))
-            
+            # HEROIC FIX: Pre-calculate monthly leave totals using the correct Jalali month range
             db_session = attendance_service._get_session()
             try:
-                for emp_id, year, month in months_to_calc:
-                    date_in_month = records[0].date.replace(year=year, month=month, day=1)
-                    used_leave = attendance_service.get_monthly_leave_taken(emp_id, date_in_month, db_session)
-                    self.monthly_leave_cache[(emp_id, year, month)] = used_leave
+                for record in records:
+                    start_of_period, _ = get_jalali_month_range(record.date)
+                    cache_key = (record.employee_id, start_of_period)
+                    
+                    if cache_key not in self.monthly_leave_cache:
+                        used_leave = attendance_service.get_monthly_leave_taken(record.employee_id, record.date, db_session)
+                        self.monthly_leave_cache[cache_key] = used_leave
             finally:
                 db_session.close()
 
@@ -135,14 +135,16 @@ class AttendanceTableModel(QAbstractTableModel):
                 return record.time_out.strftime("%H:%M") if record.time_out else ""
             elif col == self.LEAVE_COL:
                 return minutes_to_hhmm(record.leave_duration_minutes)
-            # HEROIC FIX: Display calculated monthly leave data
+            # HEROIC FIX: Display calculated monthly leave data from the corrected cache
             elif col == self.USED_LEAVE_MONTH_COL:
-                used_leave = self.monthly_leave_cache.get((record.employee_id, record.date.year, record.date.month), 0)
+                start_of_period, _ = get_jalali_month_range(record.date)
+                used_leave = self.monthly_leave_cache.get((record.employee_id, start_of_period), 0)
                 return minutes_to_hhmm(used_leave)
             elif col == self.REMAINING_LEAVE_MONTH_COL:
                 allowance = self.employee_cache.get(record.employee_id, {}).get("allowance", 0)
                 if allowance > 0:
-                    used_leave = self.monthly_leave_cache.get((record.employee_id, record.date.year, record.date.month), 0)
+                    start_of_period, _ = get_jalali_month_range(record.date)
+                    used_leave = self.monthly_leave_cache.get((record.employee_id, start_of_period), 0)
                     remaining = max(0, allowance - used_leave)
                     return minutes_to_hhmm(remaining)
                 return "N/A" # Not applicable if no allowance is set
@@ -169,6 +171,12 @@ class AttendanceTableModel(QAbstractTableModel):
             ]
             if col in numeric_cols:
                 return Qt.AlignmentFlag.AlignCenter
+        
+        elif role == Qt.ItemDataRole.BackgroundRole:
+            if record.status == 'absent':
+                return QColor("#641E16")
+            if record.status == 'on_leave':
+                return QColor("#7E5109")
 
         return QVariant()
 

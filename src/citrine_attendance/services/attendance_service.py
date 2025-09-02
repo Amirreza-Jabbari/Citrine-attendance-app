@@ -7,6 +7,7 @@ import datetime
 from ..database import Attendance, Employee, get_db_session
 from ..config import config
 from .employee_service import employee_service
+from ..date_utils import get_jalali_month_range
 
 class AttendanceServiceError(Exception): pass
 class AttendanceNotFoundError(AttendanceServiceError): pass
@@ -28,12 +29,7 @@ class AttendanceService:
 
     def get_monthly_leave_taken(self, employee_id: int, date: datetime.date, db: Session) -> int:
         """Calculates the total leave minutes taken by an employee in a specific month."""
-        start_of_month = date.replace(day=1)
-        # Find the number of days in the month
-        if date.month == 12:
-            end_of_month = date.replace(day=31)
-        else:
-            end_of_month = date.replace(month=date.month + 1, day=1) - datetime.timedelta(days=1)
+        start_of_month, end_of_month = get_jalali_month_range(date)
 
         total_leave = db.query(func.sum(Attendance.leave_duration_minutes)).filter(
             Attendance.employee_id == employee_id,
@@ -54,11 +50,16 @@ class AttendanceService:
         record.overtime_minutes = None
         record.status = self.STATUS_ABSENT
 
-        # Calculate leave duration
+        # HEROIC FIX: Correctly handle leave duration, including overnight leave.
         leave_minutes = 0
-        if record.leave_start and record.leave_end and record.leave_end > record.leave_start:
+        if record.leave_start and record.leave_end:
             leave_dt_start = datetime.datetime.combine(record.date, record.leave_start)
             leave_dt_end = datetime.datetime.combine(record.date, record.leave_end)
+
+            # If leave_end is on the next day, add one day to it
+            if leave_dt_end <= leave_dt_start:
+                leave_dt_end += datetime.timedelta(days=1)
+
             leave_minutes = int((leave_dt_end - leave_dt_start).total_seconds() / 60)
         record.leave_duration_minutes = leave_minutes
 
@@ -277,14 +278,16 @@ class AttendanceService:
             # HEROIC FIX: Pre-calculate monthly leave for efficiency
             monthly_leave_cache = {}
             for r in records:
-                cache_key = (r.employee_id, r.date.year, r.date.month)
+                start_of_period, _ = get_jalali_month_range(r.date)
+                cache_key = (r.employee_id, start_of_period)
                 if cache_key not in monthly_leave_cache:
                     monthly_leave_cache[cache_key] = self.get_monthly_leave_taken(r.employee_id, r.date, db)
 
             export_data = []
             for r in records:
                 allowance = r.employee.monthly_leave_allowance_minutes if r.employee else 0
-                used_leave = monthly_leave_cache.get((r.employee_id, r.date.year, r.date.month), 0)
+                start_of_period, _ = get_jalali_month_range(r.date)
+                used_leave = monthly_leave_cache.get((r.employee_id, start_of_period), 0)
                 remaining_leave = max(0, allowance - used_leave)
 
                 export_data.append({
