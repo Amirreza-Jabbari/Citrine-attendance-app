@@ -20,6 +20,8 @@ class Employee(Base):
     email = Column(String, unique=True, nullable=False)
     phone = Column(String, nullable=True)
     notes = Column(Text, nullable=True)
+    # HEROIC FIX: Added monthly leave allowance in minutes
+    monthly_leave_allowance_minutes = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
     attendance_records = relationship("Attendance", back_populates="employee", cascade="all, delete-orphan")
@@ -108,24 +110,22 @@ def init_db():
         logging.info("Database tables created/verified.")
 
         # --- MIGRATION ---
-        if engine and inspect(engine).has_table('attendance'):
-            inspector = inspect(engine)
-            attendance_columns = [column['name'] for column in inspector.get_columns('attendance')]
-            
-            # --- UPDATED MIGRATION LOGIC ---
-            migrations = {
-                "leave_start": "ALTER TABLE attendance ADD COLUMN leave_start TIME",
-                "leave_end": "ALTER TABLE attendance ADD COLUMN leave_end TIME",
-                "leave_duration_minutes": "ALTER TABLE attendance ADD COLUMN leave_duration_minutes INTEGER",
-                # The following columns might exist from previous versions, but we check anyway
-                "launch_duration_minutes": "ALTER TABLE attendance ADD COLUMN launch_duration_minutes INTEGER",
-                "tardiness_minutes": "ALTER TABLE attendance ADD COLUMN tardiness_minutes INTEGER",
-                "main_work_minutes": "ALTER TABLE attendance ADD COLUMN main_work_minutes INTEGER",
-                "overtime_minutes": "ALTER TABLE attendance ADD COLUMN overtime_minutes INTEGER"
-            }
-            
-            with engine.connect() as connection:
-                # Drop old launch columns if they exist
+        inspector = inspect(engine)
+        with engine.connect() as connection:
+            # --- Attendance Table Migrations ---
+            if inspector.has_table('attendance'):
+                attendance_columns = [column['name'] for column in inspector.get_columns('attendance')]
+                
+                migrations = {
+                    "leave_start": "ALTER TABLE attendance ADD COLUMN leave_start TIME",
+                    "leave_end": "ALTER TABLE attendance ADD COLUMN leave_end TIME",
+                    "leave_duration_minutes": "ALTER TABLE attendance ADD COLUMN leave_duration_minutes INTEGER",
+                    "launch_duration_minutes": "ALTER TABLE attendance ADD COLUMN launch_duration_minutes INTEGER",
+                    "tardiness_minutes": "ALTER TABLE attendance ADD COLUMN tardiness_minutes INTEGER",
+                    "main_work_minutes": "ALTER TABLE attendance ADD COLUMN main_work_minutes INTEGER",
+                    "overtime_minutes": "ALTER TABLE attendance ADD COLUMN overtime_minutes INTEGER"
+                }
+                
                 if 'launch_start' in attendance_columns and 'leave_start' not in attendance_columns:
                     logging.warning("Migrating database: renaming 'launch_start' to 'leave_start'.")
                     connection.execute(text("ALTER TABLE attendance RENAME COLUMN launch_start TO leave_start"))
@@ -133,12 +133,10 @@ def init_db():
                     logging.warning("Migrating database: renaming 'launch_end' to 'leave_end'.")
                     connection.execute(text("ALTER TABLE attendance RENAME COLUMN launch_end TO leave_end"))
                 
-                # Add new columns
                 for col_name, alter_sql in migrations.items():
-                    # Refresh columns after potential renames
                     attendance_columns_refreshed = [c['name'] for c in inspector.get_columns('attendance')]
                     if col_name not in attendance_columns_refreshed:
-                        logging.warning(f"Migrating database: Adding '{col_name}' column.")
+                        logging.warning(f"Migrating database: Adding '{col_name}' column to attendance.")
                         try:
                             trans = connection.begin()
                             connection.execute(text(alter_sql))
@@ -147,7 +145,21 @@ def init_db():
                         except Exception as e:
                             if trans: trans.rollback()
                             logging.critical(f"Failed to add '{col_name}': {e}")
-                            # Don't raise, just log, to avoid crashing on startup
+
+            # --- Employee Table Migrations (HEROIC FIX) ---
+            if inspector.has_table('employees'):
+                employee_columns = [column['name'] for column in inspector.get_columns('employees')]
+                if 'monthly_leave_allowance_minutes' not in employee_columns:
+                    logging.warning("Migrating database: Adding 'monthly_leave_allowance_minutes' column to employees.")
+                    try:
+                        trans = connection.begin()
+                        connection.execute(text("ALTER TABLE employees ADD COLUMN monthly_leave_allowance_minutes INTEGER NOT NULL DEFAULT 0"))
+                        trans.commit()
+                        logging.info("Successfully added 'monthly_leave_allowance_minutes' column.")
+                    except Exception as e:
+                        if trans: trans.rollback()
+                        logging.critical(f"Failed to add 'monthly_leave_allowance_minutes': {e}")
+
     except Exception as e:
         logging.critical(f"Failed to initialize database: {e}")
         raise

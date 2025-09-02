@@ -22,7 +22,7 @@ from ...config import config
 from ..dialogs.add_attendance_dialog import AddAttendanceDialog, EditAttendanceDialog
 from ..dialogs.export_dialog import ExportDialog
 from ...services.export_service import export_service
-from ...services.attendance_service import attendance_service
+from ...services.attendance_service import attendance_service, LeaveBalanceExceededError
 from ...services.audit_service import audit_service
 from ...locale import _
 from ...utils.time_utils import minutes_to_hhmm
@@ -59,11 +59,6 @@ class AttendanceView(QWidget):
         self.attendance_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.attendance_table.setSortingEnabled(False)
         self.attendance_table.setModel(self.attendance_model)
-        # TODO: To display hourly leave, you need to update AttendanceTableModel
-        # to include columns for 'Leave Start' and 'Leave End'.
-        # For example, in your model's __init__ or a setup method:
-        # self.headers = [..., _("hourly_leave_start"), _("hourly_leave_end")]
-        # And in the data() method, return the corresponding data for these columns.
         self.attendance_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.attendance_table.doubleClicked.connect(self.open_edit_record_dialog)
         self.attendance_table.horizontalHeader().setStretchLastSection(True)
@@ -88,7 +83,6 @@ class AttendanceView(QWidget):
 
         filter_layout.addWidget(QLabel(_("attendance_filter_start")))
         self.start_date_edit = JalaliDateEdit()
-        # default to 30 days ago
         self.start_date_edit.setDate(QDate.currentDate().addDays(-30))
         filter_layout.addWidget(self.start_date_edit)
 
@@ -124,16 +118,12 @@ class AttendanceView(QWidget):
         self.refresh_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         filter_layout.addWidget(self.refresh_button)
 
-        # Explicitly connect signals — robust and clear (works with JalaliDateEdit)
         self.employee_filter_combo.currentIndexChanged.connect(self.load_attendance_data)
-        # JalaliDateEdit exposes dateChanged(QDate) similar to QDateEdit
         self.start_date_edit.dateChanged.connect(self.load_attendance_data)
         self.end_date_edit.dateChanged.connect(self.load_attendance_data)
-
         self.status_present_cb.stateChanged.connect(self.load_attendance_data)
         self.status_absent_cb.stateChanged.connect(self.load_attendance_data)
         self.status_on_leave_cb.stateChanged.connect(self.load_attendance_data)
-
         self.search_filter_edit.textChanged.connect(self.load_attendance_data)
         self.refresh_button.clicked.connect(self.load_attendance_data)
 
@@ -168,25 +158,17 @@ class AttendanceView(QWidget):
         """Load attendance data based on current filter settings."""
         try:
             statuses = []
-            if self.status_present_cb.isChecked():
-                statuses.append('present')
-            if self.status_absent_cb.isChecked():
-                statuses.append('absent')
-            if self.status_on_leave_cb.isChecked():
-                statuses.append('on_leave')
-
-            # JalaliDateEdit.date() returns a QDate corresponding to the Gregorian date
-            start_py = self.start_date_edit.date().toPyDate()
-            end_py = self.end_date_edit.date().toPyDate()
+            if self.status_present_cb.isChecked(): statuses.append('present')
+            if self.status_absent_cb.isChecked(): statuses.append('absent')
+            if self.status_on_leave_cb.isChecked(): statuses.append('on_leave')
 
             self.attendance_model.set_filters(
                 employee_id=self.employee_filter_combo.currentData(),
-                start_date=start_py,
-                end_date=end_py,
+                start_date=self.start_date_edit.date().toPyDate(),
+                end_date=self.end_date_edit.date().toPyDate(),
                 statuses=statuses,
                 search_text=self.search_filter_edit.text().strip()
             )
-            # self.update_aggregates() # Add this back if you implement get_aggregates in the model
         except Exception as e:
             self.logger.error(f"Error loading attendance data: {e}", exc_info=True)
             QMessageBox.critical(self, _("dashboard_error"), _("error_loading_attendance_data", error=e))
@@ -199,8 +181,7 @@ class AttendanceView(QWidget):
     def open_context_menu(self, position):
         menu = QMenu()
         index = self.attendance_table.indexAt(position)
-        if not index.isValid():
-            return
+        if not index.isValid(): return
 
         edit_action = menu.addAction(_("edit"))
         delete_action = menu.addAction(_("delete"))
@@ -208,24 +189,19 @@ class AttendanceView(QWidget):
 
         action = menu.exec(self.attendance_table.viewport().mapToGlobal(position))
 
-        if action == edit_action:
-            self.open_edit_record_dialog(index)
-        elif action == delete_action:
-            self.delete_selected_record()
-        elif action == duplicate_action:
-            self.duplicate_selected_record()
+        if action == edit_action: self.open_edit_record_dialog(index)
+        elif action == delete_action: self.delete_selected_record()
+        elif action == duplicate_action: self.duplicate_selected_record()
 
     def get_selected_record(self) -> Optional[Attendance]:
         """Helper to get the Attendance object from the current selection."""
         indexes = self.attendance_table.selectionModel().selectedRows()
-        if not indexes:
-            return None
+        if not indexes: return None
         return self.attendance_model.get_attendance_at_row(indexes[0].row())
 
     def delete_selected_record(self):
         record = self.get_selected_record()
-        if not record:
-            return
+        if not record: return
 
         emp_name = self.attendance_model.employee_cache.get(record.employee_id, 'Unknown')
         reply = QMessageBox.question(
@@ -243,8 +219,7 @@ class AttendanceView(QWidget):
 
     def duplicate_selected_record(self):
         record = self.get_selected_record()
-        if not record:
-            return
+        if not record: return
 
         try:
             new_record = attendance_service.add_manual_attendance(
@@ -269,14 +244,17 @@ class AttendanceView(QWidget):
 
     def handle_record_added(self):
         dialog = self.sender()
-        if not dialog:
-            return
+        if not dialog: return
         try:
             new_data = dialog.get_new_record_data()
             if new_data:
                 self.attendance_model.add_attendance_record(new_data)
                 QMessageBox.information(self, _("success"), _("record_added_success"))
                 audit_service.log_action("attendance", 0, "create", {k: str(v) for k, v in new_data.items()}, self.current_user.username)
+        # HEROIC FIX: Handle leave balance exceeded error
+        except LeaveBalanceExceededError as e:
+            self.logger.warning(f"Add record failed: {e}")
+            QMessageBox.warning(dialog, _("error"), f"Failed to add record: {e}")
         except Exception as e:
             self.logger.error(f"Add record failed: {e}", exc_info=True)
             QMessageBox.critical(dialog, _("dashboard_error"), _("error_adding_record", error=e))
@@ -292,12 +270,15 @@ class AttendanceView(QWidget):
     def handle_record_updated(self, record_id: int, record_data: dict):
         """Handles the signal from the edit dialog."""
         dialog = self.sender()
-        if not dialog:
-            return
+        if not dialog: return
         try:
             self.attendance_model.update_attendance_record(record_id, record_data)
             QMessageBox.information(self, _("success"), _("record_updated_success"))
             audit_service.log_action("attendance", record_id, "update", {k: str(v) for k, v in record_data.items()}, self.current_user.username)
+        # HEROIC FIX: Handle leave balance exceeded error
+        except LeaveBalanceExceededError as e:
+            self.logger.warning(f"Update record failed: {e}")
+            QMessageBox.warning(dialog, _("error"), f"Failed to update record: {e}")
         except Exception as e:
             self.logger.error(f"Update record failed: {e}", exc_info=True)
             QMessageBox.critical(dialog, _("dashboard_error"), _("error_updating_record", error=e))
@@ -337,8 +318,7 @@ class AttendanceView(QWidget):
 
     def copy_selection(self):
         selection = self.attendance_table.selectionModel().selectedIndexes()
-        if not selection:
-            return
+        if not selection: return
 
         rows = sorted(list(set(index.row() for index in selection)))
         cols = sorted(list(set(index.column() for index in selection)))

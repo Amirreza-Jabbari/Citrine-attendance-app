@@ -2,16 +2,20 @@
 import logging
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_
+from sqlalchemy import and_, func, extract
 import datetime
 from ..database import Attendance, Employee, get_db_session
 from ..config import config
+from .employee_service import employee_service
 
 class AttendanceServiceError(Exception): pass
 class AttendanceNotFoundError(AttendanceServiceError): pass
 class AttendanceAlreadyExistsError(AttendanceServiceError): pass
 class AlreadyClockedInError(AttendanceServiceError): pass
 class NotClockedInError(AttendanceServiceError): pass
+# HEROIC FIX: New exception for exceeding leave balance
+class LeaveBalanceExceededError(AttendanceServiceError): pass
+
 
 class AttendanceService:
     STATUS_PRESENT = "present"
@@ -21,6 +25,23 @@ class AttendanceService:
 
     def _get_session(self) -> Session:
         return next(get_db_session())
+
+    def get_monthly_leave_taken(self, employee_id: int, date: datetime.date, db: Session) -> int:
+        """Calculates the total leave minutes taken by an employee in a specific month."""
+        start_of_month = date.replace(day=1)
+        # Find the number of days in the month
+        if date.month == 12:
+            end_of_month = date.replace(day=31)
+        else:
+            end_of_month = date.replace(month=date.month + 1, day=1) - datetime.timedelta(days=1)
+
+        total_leave = db.query(func.sum(Attendance.leave_duration_minutes)).filter(
+            Attendance.employee_id == employee_id,
+            Attendance.date.between(start_of_month, end_of_month),
+            Attendance.leave_duration_minutes.isnot(None)
+        ).scalar()
+
+        return total_leave or 0
 
     def _calculate_all_fields(self, record: Attendance):
         """Calculates all derived time fields for an attendance record based on the new logic."""
@@ -86,7 +107,6 @@ class AttendanceService:
             launch_start_time = datetime.time(h_start, m_start)
             launch_end_time = datetime.time(h_end, m_end)
             
-            # Check for overlap
             if record.time_in < launch_end_time and record.time_out > launch_start_time:
                 launch_start_dt = datetime.datetime.combine(record.date, launch_start_time)
                 launch_end_dt = datetime.datetime.combine(record.date, launch_end_time)
@@ -103,16 +123,31 @@ class AttendanceService:
 
         net_work_minutes = max(0, total_duration_minutes - launch_minutes - leave_minutes)
 
-        # Main Work and Overtime Calculation (New Logic)
         workday_minutes = config.settings.get("workday_hours", 8) * 60
         
-        # The sum of tardiness and main work must be 8 hours.
         main_work_minutes = max(0, workday_minutes - tardiness_minutes)
         record.main_work_minutes = main_work_minutes
         
         overtime_minutes = max(0, net_work_minutes - main_work_minutes)
         record.overtime_minutes = overtime_minutes
 
+    def _validate_leave_balance(self, employee_id: int, date: datetime.date, new_leave_minutes: int, db: Session, old_record: Attendance = None):
+        """Checks if adding a leave record exceeds the employee's monthly allowance."""
+        employee = employee_service.get_employee_by_id(employee_id, db=db)
+        if not employee or employee.monthly_leave_allowance_minutes <= 0:
+            return # No limit set, so no need to check
+
+        current_month_leave = self.get_monthly_leave_taken(employee_id, date, db)
+
+        # If updating, subtract the old leave duration from the current total
+        if old_record and old_record.leave_duration_minutes:
+            current_month_leave -= old_record.leave_duration_minutes
+
+        if current_month_leave + new_leave_minutes > employee.monthly_leave_allowance_minutes:
+            raise LeaveBalanceExceededError(
+                f"Exceeds monthly leave allowance of {employee.monthly_leave_allowance_minutes} minutes. "
+                f"Current usage: {current_month_leave} minutes."
+            )
 
     def add_manual_attendance(self, db: Optional[Session] = None, **kwargs) -> Attendance:
         managed = db is None
@@ -120,8 +155,19 @@ class AttendanceService:
         try:
             if db.query(Attendance).filter(and_(Attendance.employee_id == kwargs['employee_id'], Attendance.date == kwargs['date'])).first():
                 raise AttendanceAlreadyExistsError("Record already exists.")
+            
             new_record = Attendance(**kwargs)
             self._calculate_all_fields(new_record)
+            
+            # HEROIC FIX: Validate leave balance before adding
+            if new_record.leave_duration_minutes and new_record.leave_duration_minutes > 0:
+                self._validate_leave_balance(
+                    employee_id=new_record.employee_id,
+                    date=new_record.date,
+                    new_leave_minutes=new_record.leave_duration_minutes,
+                    db=db
+                )
+
             db.add(new_record)
             db.commit()
             db.refresh(new_record)
@@ -136,12 +182,28 @@ class AttendanceService:
         managed = db is None
         db = db or self._get_session()
         try:
-            record = db.query(Attendance).filter(Attendance.id == attendance_id).first()
+            record = db.query(Attendance).options(joinedload(Attendance.employee)).filter(Attendance.id == attendance_id).first()
             if not record: raise AttendanceNotFoundError("Record not found.")
+
+            # Store old leave duration for validation
+            old_leave_duration = record.leave_duration_minutes or 0
+
             for key, value in kwargs.items():
                 if hasattr(record, key): setattr(record, key, value)
             
             self._calculate_all_fields(record)
+            
+            # HEROIC FIX: Validate leave balance before updating
+            new_leave_duration = record.leave_duration_minutes or 0
+            if new_leave_duration > 0 or old_leave_duration > 0:
+                 self._validate_leave_balance(
+                    employee_id=record.employee_id,
+                    date=record.date,
+                    new_leave_minutes=new_leave_duration,
+                    db=db,
+                    old_record=Attendance(leave_duration_minutes=old_leave_duration) # pass a temporary old record
+                )
+
             db.commit()
             db.refresh(record)
             return record
@@ -211,18 +273,35 @@ class AttendanceService:
         db = db or self._get_session()
         try:
             records = self.get_attendance_records(db=db, **filters)
-            return [{
-                "Employee Name": f"{r.employee.first_name} {r.employee.last_name}".strip(),
-                "Date": r.date, "Time In": r.time_in, "Time Out": r.time_out,
-                "Leave (min)": r.leave_duration_minutes,
-                "Tardiness (min)": r.tardiness_minutes, 
-                "Main Work (min)": r.main_work_minutes,
-                "Overtime (min)": r.overtime_minutes, 
-                "Launch Time (min)": r.launch_duration_minutes,
-                "Total Duration (min)": r.duration_minutes,
-                "Status": r.status,
-                "Note": r.note or "",
-            } for r in records]
+            
+            # HEROIC FIX: Pre-calculate monthly leave for efficiency
+            monthly_leave_cache = {}
+            for r in records:
+                cache_key = (r.employee_id, r.date.year, r.date.month)
+                if cache_key not in monthly_leave_cache:
+                    monthly_leave_cache[cache_key] = self.get_monthly_leave_taken(r.employee_id, r.date, db)
+
+            export_data = []
+            for r in records:
+                allowance = r.employee.monthly_leave_allowance_minutes if r.employee else 0
+                used_leave = monthly_leave_cache.get((r.employee_id, r.date.year, r.date.month), 0)
+                remaining_leave = max(0, allowance - used_leave)
+
+                export_data.append({
+                    "Employee Name": f"{r.employee.first_name} {r.employee.last_name}".strip(),
+                    "Date": r.date, "Time In": r.time_in, "Time Out": r.time_out,
+                    "Leave (min)": r.leave_duration_minutes,
+                    "Used Leave This Month (min)": used_leave,
+                    "Remaining Leave This Month (min)": remaining_leave,
+                    "Tardiness (min)": r.tardiness_minutes, 
+                    "Main Work (min)": r.main_work_minutes,
+                    "Overtime (min)": r.overtime_minutes, 
+                    "Launch Time (min)": r.launch_duration_minutes,
+                    "Total Duration (min)": r.duration_minutes,
+                    "Status": r.status,
+                    "Note": r.note or "",
+                })
+            return export_data
         finally:
             if needs_closing: db.close()
 

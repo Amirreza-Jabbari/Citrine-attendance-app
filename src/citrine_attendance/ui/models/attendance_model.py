@@ -13,19 +13,21 @@ from ...locale import _
 class AttendanceTableModel(QAbstractTableModel):
     """Custom model to display and manage attendance data in a QTableView."""
 
-    # --- Updated Column Definitions ---
     EMPLOYEE_NAME_COL = 0
     DATE_COL = 1
     TIME_IN_COL = 2
     TIME_OUT_COL = 3
-    LEAVE_COL = 4  # New column for leave
-    TARDINESS_COL = 5
-    MAIN_WORK_COL = 6
-    OVERTIME_COL = 7
-    LAUNCH_TIME_COL = 8
-    TOTAL_DURATION_COL = 9
-    STATUS_COL = 10
-    NOTE_COL = 11
+    LEAVE_COL = 4
+    # HEROIC FIX: Added new columns for monthly leave tracking
+    USED_LEAVE_MONTH_COL = 5
+    REMAINING_LEAVE_MONTH_COL = 6
+    TARDINESS_COL = 7
+    MAIN_WORK_COL = 8
+    OVERTIME_COL = 9
+    LAUNCH_TIME_COL = 10
+    TOTAL_DURATION_COL = 11
+    STATUS_COL = 12
+    NOTE_COL = 13
 
     def __init__(self, config):
         super().__init__()
@@ -33,14 +35,16 @@ class AttendanceTableModel(QAbstractTableModel):
         self.config = config
         self.attendance_data: List[Attendance] = []
         self.employee_cache = {}
+        self.monthly_leave_cache = {} # Cache for monthly leave data
         self.filters = {}
-        # --- Updated Column Headers ---
         self.COLUMN_HEADERS = [
             _("attendance_header_employee"),
             _("attendance_header_date"),
             _("attendance_header_time_in"),
             _("attendance_header_time_out"),
-            _("attendance_header_leave"),  # New header
+            _("attendance_header_leave"),
+            _("Used Leave (Month)"), # New Header
+            _("Remaining Leave (Month)"), # New Header
             _("attendance_header_tardiness"),
             _("attendance_header_main_work"),
             _("attendance_header_overtime"),
@@ -50,8 +54,6 @@ class AttendanceTableModel(QAbstractTableModel):
             _("attendance_header_notes")
         ]
         self.COLUMN_COUNT = len(self.COLUMN_HEADERS)
-
-        # --- Updated Status Display ---
         self.STATUS_DISPLAY = {
             attendance_service.STATUS_PRESENT: _("attendance_filter_present"),
             attendance_service.STATUS_ABSENT: _("attendance_filter_absent"),
@@ -59,20 +61,42 @@ class AttendanceTableModel(QAbstractTableModel):
         }
 
     def load_data(self):
-        """Load attendance data based on current filters."""
+        """Load attendance data and pre-calculate monthly leave."""
         try:
+            # Clear caches
+            self.employee_cache.clear()
+            self.monthly_leave_cache.clear()
+            
             records = attendance_service.get_attendance_records(**self.filters)
 
+            # Populate employee cache
             self.employee_cache = {
-                r.employee_id: f"{r.employee.first_name} {r.employee.last_name}".strip() or r.employee.email
+                r.employee_id: {
+                    "name": f"{r.employee.first_name} {r.employee.last_name}".strip() or r.employee.email,
+                    "allowance": r.employee.monthly_leave_allowance_minutes
+                }
                 for r in records if r.employee
             }
+
+            # HEROIC FIX: Pre-calculate monthly leave totals for all relevant months
+            months_to_calc = set()
+            for r in records:
+                months_to_calc.add((r.employee_id, r.date.year, r.date.month))
+            
+            db_session = attendance_service._get_session()
+            try:
+                for emp_id, year, month in months_to_calc:
+                    date_in_month = records[0].date.replace(year=year, month=month, day=1)
+                    used_leave = attendance_service.get_monthly_leave_taken(emp_id, date_in_month, db_session)
+                    self.monthly_leave_cache[(emp_id, year, month)] = used_leave
+            finally:
+                db_session.close()
 
             search_text = self.filters.get('search_text', '').lower()
             if search_text:
                 records = [
                     r for r in records if
-                    search_text in self.employee_cache.get(r.employee_id, "").lower() or
+                    search_text in self.employee_cache.get(r.employee_id, {}).get("name", "").lower() or
                     search_text in (r.note or "").lower()
                 ]
 
@@ -94,7 +118,6 @@ class AttendanceTableModel(QAbstractTableModel):
         return self.COLUMN_COUNT
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        """Return data for a specific cell."""
         if not index.isValid() or index.row() >= len(self.attendance_data):
             return QVariant()
 
@@ -103,7 +126,7 @@ class AttendanceTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             if col == self.EMPLOYEE_NAME_COL:
-                return self.employee_cache.get(record.employee_id, f"ID:{record.employee_id}")
+                return self.employee_cache.get(record.employee_id, {}).get("name", f"ID:{record.employee_id}")
             elif col == self.DATE_COL:
                 return format_date_for_display(record.date, self.config.settings.get("date_format", "both"))
             elif col == self.TIME_IN_COL:
@@ -112,6 +135,17 @@ class AttendanceTableModel(QAbstractTableModel):
                 return record.time_out.strftime("%H:%M") if record.time_out else ""
             elif col == self.LEAVE_COL:
                 return minutes_to_hhmm(record.leave_duration_minutes)
+            # HEROIC FIX: Display calculated monthly leave data
+            elif col == self.USED_LEAVE_MONTH_COL:
+                used_leave = self.monthly_leave_cache.get((record.employee_id, record.date.year, record.date.month), 0)
+                return minutes_to_hhmm(used_leave)
+            elif col == self.REMAINING_LEAVE_MONTH_COL:
+                allowance = self.employee_cache.get(record.employee_id, {}).get("allowance", 0)
+                if allowance > 0:
+                    used_leave = self.monthly_leave_cache.get((record.employee_id, record.date.year, record.date.month), 0)
+                    remaining = max(0, allowance - used_leave)
+                    return minutes_to_hhmm(remaining)
+                return "N/A" # Not applicable if no allowance is set
             elif col == self.TARDINESS_COL:
                 return minutes_to_hhmm(record.tardiness_minutes)
             elif col == self.MAIN_WORK_COL:
@@ -128,7 +162,12 @@ class AttendanceTableModel(QAbstractTableModel):
                 return record.note or ""
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            if col > self.TIME_OUT_COL and col < self.STATUS_COL:
+            numeric_cols = [
+                self.LEAVE_COL, self.USED_LEAVE_MONTH_COL, self.REMAINING_LEAVE_MONTH_COL,
+                self.TARDINESS_COL, self.MAIN_WORK_COL, self.OVERTIME_COL,
+                self.LAUNCH_TIME_COL, self.TOTAL_DURATION_COL
+            ]
+            if col in numeric_cols:
                 return Qt.AlignmentFlag.AlignCenter
 
         return QVariant()
@@ -144,28 +183,24 @@ class AttendanceTableModel(QAbstractTableModel):
         return None
 
     def refresh(self):
-        """Reloads all data from the database based on current filters."""
         self.load_data()
 
     def set_filters(self, **kwargs):
-        """Sets the filters and triggers a data refresh."""
         self.filters = kwargs
         self.refresh()
 
     def add_attendance_record(self, record_data: dict):
-        """Adds a new record via the service and refreshes the model."""
         try:
             attendance_service.add_manual_attendance(**record_data)
             self.refresh()
         except Exception as e:
             self.logger.error(f"Error adding record via model: {e}", exc_info=True)
-            raise  # Re-raise to be caught by the UI
+            raise
 
     def update_attendance_record(self, record_id: int, record_data: dict):
-        """Updates an existing record via the service and refreshes the model."""
         try:
             attendance_service.update_attendance(attendance_id=record_id, **record_data)
             self.refresh()
         except Exception as e:
             self.logger.error(f"Error updating record via model: {e}", exc_info=True)
-            raise  # Re-raise to be caught by the UI
+            raise

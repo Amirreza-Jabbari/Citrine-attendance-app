@@ -44,7 +44,8 @@ TRANSLATIONS = {
         "dashboard_please_select_employee": "Please select an employee first.",
         "dashboard_success": "Success",
         "dashboard_action_recorded": "{action} recorded successfully for {employee} on {date} at {time}.",
-        "dashboard_error": "Error during {action} for Employee ID {employee_id}: {error}",
+        "error": "Error", # HEROIC FIX: Generic error title
+        "dashboard_error_message": "Error during {action} for Employee ID {employee_id}: {error}", # HEROIC FIX: Specific key for message
         "employee_add": "Add Employee",
         "employee_edit": "Edit Employee",
         "employee_delete": "Delete Employee",
@@ -181,6 +182,13 @@ TRANSLATIONS = {
         "settings_access_restricted_to_admins": "Access restricted to administrators.",
         "settings_error_loading_users": "Error loading users: {error}",
         "settings_error_loading_audit_log": "Error loading audit log: {error}",
+        # HEROIC FIX: Added missing error message keys
+        "error_loading_filter_data": "Error loading filter data: {error}",
+        "error_loading_attendance_data": "Error loading attendance data: {error}",
+        "error_deleting_record": "Error deleting record: {error}",
+        "error_duplicating_record": "Error duplicating record: {error}",
+        "error_adding_record": "Error adding record: {error}",
+        "error_updating_record": "Error updating record: {error}",
     },
     "fa": {
         "app_title": "زرسهام - حضور و غیاب",
@@ -224,7 +232,8 @@ TRANSLATIONS = {
         "dashboard_please_select_employee": "لطفا ابتدا یک کارمند را انتخاب کنید.",
         "dashboard_success": "موفق",
         "dashboard_action_recorded": "{action} برای {employee} در تاریخ {date} ساعت {time} با موفقیت ثبت شد.",
-        "dashboard_error": "خطا در هنگام {action} برای کارمند با شناسه {employee_id}: {error}",
+        "error": "خطا", # HEROIC FIX: Generic error title
+        "dashboard_error_message": "خطا در هنگام {action} برای کارمند با شناسه {employee_id}: {error}", # HEROIC FIX: Specific key for message
         "employee_add": "افزودن کارمند",
         "employee_edit": "ویرایش کارمند",
         "employee_delete": "حذف کارمند",
@@ -365,6 +374,13 @@ TRANSLATIONS = {
         "attendance_launch_end": "پایان ناهار:",
         "dashboard_title": "پنل داشبورد",
         "employee_view_title": "مدیریت کارمندان",
+        # HEROIC FIX: Added missing error message keys
+        "error_loading_filter_data": "خطا در بارگیری داده‌های فیلتر: {error}",
+        "error_loading_attendance_data": "خطا در بارگیری داده‌های حضور و غیاب: {error}",
+        "error_deleting_record": "خطا در حذف رکورد: {error}",
+        "error_duplicating_record": "خطا در تکثیر رکورد: {error}",
+        "error_adding_record": "خطا در افزودن رکورد: {error}",
+        "error_updating_record": "خطا در به‌روزرسانی رکورد: {error}",
     },
 }
 
@@ -376,7 +392,17 @@ class Translator:
         self.language = language
 
     def translate(self, key, **kwargs):
-        return TRANSLATIONS.get(self.language, {}).get(key, key).format(**kwargs)
+        # Fallback to English if a key is missing in the current language
+        translation = TRANSLATIONS.get(self.language, {}).get(key)
+        if translation is None:
+            translation = TRANSLATIONS.get("en", {}).get(key, key)
+        
+        try:
+            return translation.format(**kwargs)
+        except KeyError:
+            # If formatting fails, return the raw translation string
+            # to avoid crashing the app.
+            return translation
 
 translator = Translator()
 

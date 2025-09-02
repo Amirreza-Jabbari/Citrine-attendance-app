@@ -3,7 +3,7 @@
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableView,
-    QMessageBox, QHeaderView, QAbstractItemView, QDialog, QLabel
+    QMessageBox, QHeaderView, QAbstractItemView, QLabel
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
@@ -29,7 +29,7 @@ class EmployeeView(QWidget):
         self.edit_dialog = None
 
         self.init_ui()
-        self.load_employees() # Load initial data when the view is created
+        self.load_employees()
 
     def init_ui(self):
         """Initialize the employee view UI."""
@@ -37,14 +37,11 @@ class EmployeeView(QWidget):
         main_layout.setSpacing(15)
         main_layout.setContentsMargins(25, 25, 25, 25)
 
-        # View Title
         title_label = QLabel(_("employee_view_title"))
         title_label.setObjectName("viewTitle")
         main_layout.addWidget(title_label)
 
-        # --- Top Bar with action buttons ---
         top_layout = QHBoxLayout()
-        
         self.add_btn = QPushButton(_("employee_add"))
         self.add_btn.clicked.connect(self.open_add_employee_dialog)
         top_layout.addWidget(self.add_btn)
@@ -64,7 +61,6 @@ class EmployeeView(QWidget):
         top_layout.addStretch()
         main_layout.addLayout(top_layout)
 
-        # --- Employee Table ---
         self.employee_table = QTableView()
         self.employee_table.setModel(self.employee_model)
         self.employee_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -72,14 +68,11 @@ class EmployeeView(QWidget):
         self.employee_table.setSortingEnabled(True)
         self.employee_table.setAlternatingRowColors(True)
 
-        # Configure header
         header = self.employee_table.horizontalHeader()
         header.setStretchLastSection(True)
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         
-        # Connect selection changes to button states
         self.employee_table.selectionModel().selectionChanged.connect(self.on_selection_changed)
-
         main_layout.addWidget(self.employee_table)
 
     def load_employees(self):
@@ -210,8 +203,7 @@ class EmployeeView(QWidget):
             except EmployeeNotFoundError:
                 self.logger.warning(f"Delete failed: Employee ID {employee_to_delete.id} not found.")
                 QMessageBox.warning(self, "Not Found", _("employee_not_found"))
-                self.load_employees() # Refresh view from db
+                self.load_employees()
             except Exception as e:
                 self.logger.error(f"Delete Employee failed: {e}", exc_info=True)
                 QMessageBox.critical(self, "Error", f"Failed to delete employee: {e}")
-

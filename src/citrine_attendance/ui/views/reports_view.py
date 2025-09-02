@@ -25,17 +25,19 @@ class ReportsView(QWidget):
         super().__init__()
         self.logger = logging.getLogger(__name__)
         self.current_user = current_user
-        self.last_generated_data = []  # Cache the data for export
+        self.last_generated_data = []
 
-        # Define the order and mapping of report columns
+        # HEROIC FIX: Added new columns for monthly leave
         self.column_map = {
             "Employee Name": "report_header_employee_name",
             "Date": "report_header_date",
             "Time In": "report_header_time_in",
             "Time Out": "report_header_time_out",
             "Status": "report_header_status",
-            "Tardiness (min)": "report_header_tardiness",
             "Leave (min)": "report_header_leave",
+            "Used Leave This Month (min)": "Used Leave This Month",
+            "Remaining Leave This Month (min)": "Remaining Leave This Month",
+            "Tardiness (min)": "report_header_tardiness",
             "Main Work (min)": "report_header_main_work",
             "Overtime (min)": "report_header_overtime",
             "Launch Time (min)": "report_header_launch_time",
@@ -53,10 +55,7 @@ class ReportsView(QWidget):
         layout.setSpacing(15)
         layout.setContentsMargins(15, 15, 15, 15)
 
-        # --- Parameters Section ---
         params_layout = QHBoxLayout()
-
-        # Date Range
         params_layout.addWidget(QLabel(_("reports_date_range")))
         self.start_date_edit = JalaliDateEdit()
         self.start_date_edit.setDate(QDate.currentDate().addDays(-30))
@@ -64,8 +63,6 @@ class ReportsView(QWidget):
         self.end_date_edit = JalaliDateEdit()
         self.end_date_edit.setDate(QDate.currentDate())
         params_layout.addWidget(self.end_date_edit)
-
-        # Employee Selection
         params_layout.addWidget(QLabel(_("reports_employee_optional")))
         self.employee_combo = QComboBox()
         self.employee_combo.setMinimumWidth(200)
@@ -73,7 +70,6 @@ class ReportsView(QWidget):
         params_layout.addStretch()
         layout.addLayout(params_layout)
 
-        # --- Action Buttons ---
         button_layout = QHBoxLayout()
         self.generate_button = QPushButton(_("reports_generate_preview"))
         self.generate_button.clicked.connect(self.generate_preview)
@@ -85,7 +81,6 @@ class ReportsView(QWidget):
         button_layout.addStretch()
         layout.addLayout(button_layout)
 
-        # --- Preview Area (Using QTableView) ---
         layout.addWidget(QLabel(_("reports_preview")))
         self.preview_table = QTableView()
         self.preview_table.setAlternatingRowColors(True)
@@ -99,22 +94,17 @@ class ReportsView(QWidget):
         """Update UI element text based on the current language."""
         self.start_date_edit.parent().findChild(QLabel).setText(_("reports_date_range"))
         self.employee_combo.parent().findChild(QLabel).setText(_("reports_employee_optional"))
-        # Update combo box item for "All Employees"
         if self.employee_combo.count() > 0:
             self.employee_combo.setItemText(0, _("reports_all_employees"))
         self.generate_button.setText(_("reports_generate_preview"))
         self.export_button.setText(_("reports_export_report"))
         self.preview_table.parent().findChild(QLabel).setText(_("reports_preview"))
 
-        # Right-to-Left layout for Persian
         if translator.language == 'fa':
             self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-            self.preview_table.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         else:
             self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-            self.preview_table.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-
-        # Regenerate headers if data exists
+        
         if self.preview_model.columnCount() > 0:
             self.populate_preview_table()
 
@@ -173,18 +163,16 @@ class ReportsView(QWidget):
     def populate_preview_table(self):
         """Fills the QTableView with the cached report data."""
         self.preview_model.clear()
-
         if not self.last_generated_data:
             return
 
-        # HEROIC FIX: Update headers to show H:M format and format minute values
         headers = [_(self.column_map.get(key, key)) for key in self.column_map.keys()]
-        # Smartly replace minute indicators in headers for both languages
         processed_headers = [h.replace("(min)", "(H:M)").replace("(دقیقه)", "(س:د)") for h in headers]
         self.preview_model.setHorizontalHeaderLabels(processed_headers)
 
         minute_columns = [
-            "Tardiness (min)", "Leave (min)", "Main Work (min)", "Overtime (min)",
+            "Leave (min)", "Used Leave This Month (min)", "Remaining Leave This Month (min)",
+            "Tardiness (min)", "Main Work (min)", "Overtime (min)",
             "Launch Time (min)", "Total Duration (min)"
         ]
 
@@ -193,14 +181,11 @@ class ReportsView(QWidget):
             for original_key in self.column_map.keys():
                 value = row_data.get(original_key)
                 
-                # Translate status values before formatting
                 if original_key == "Status" and value in ["present", "absent", "on_leave"]:
                     display_value = _(value)
-                # Format all minute-based columns to H:M
                 elif original_key in minute_columns:
-                    display_value = minutes_to_hhmm(value)
+                    display_value = minutes_to_hhmm(value) if value is not None else ""
                 else:
-                    # Format everything else for display
                     display_value = self._format_cell_value(value)
                 
                 item = QStandardItem(display_value)
@@ -208,9 +193,6 @@ class ReportsView(QWidget):
             self.preview_model.appendRow(row_items)
 
         self.preview_table.resizeColumnsToContents()
-        self.preview_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.preview_table.horizontalHeader().setStretchLastSection(True)
-
 
     def export_report(self):
         """Export the generated report data."""
@@ -228,11 +210,7 @@ class ReportsView(QWidget):
             return
 
         export_path = Path(file_path_str)
-
         try:
-            # HEROIC FIX: Prepare data for export.
-            # We translate headers and specific text values (like status),
-            # but critically, we pass numeric values (like minutes) as raw numbers.
             export_ready_data = []
             for row in self.last_generated_data:
                 processed_row = {}
@@ -240,15 +218,11 @@ class ReportsView(QWidget):
                     translated_header = _(translation_key)
                     value = row.get(original_key)
 
-                    # Logic to determine the final value for the export file
                     if original_key == "Status" and value in ["present", "absent", "on_leave"]:
-                        # Translate status text
                         final_value = _(value)
                     elif isinstance(value, time):
-                        # Format time objects to strings
                         final_value = value.strftime('%H:%M')
                     else:
-                        # Keep numbers as numbers (int, float) and other values as they are
                         final_value = value
                     
                     processed_row[translated_header] = final_value
@@ -260,7 +234,6 @@ class ReportsView(QWidget):
                 export_service.export_to_csv(export_ready_data, export_path)
             elif "pdf" in selected_filter:
                 title = _("reports_monthly_timesheet") + f" ({self.start_date_edit.date().toString('yyyy-MM-dd')} to {self.end_date_edit.date().toString('yyyy-MM-dd')})"
-                # PDF export often expects string data, so we can format everything here
                 pdf_data = []
                 for row in export_ready_data:
                     pdf_data.append({k: str(v) if v is not None else "" for k, v in row.items()})
