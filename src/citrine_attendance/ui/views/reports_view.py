@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QStandardItemModel, QStandardItem
+from ..widgets.jalali_date_edit import JalaliDateEdit
 
 from ...services.attendance_service import attendance_service
 from ...services.employee_service import employee_service
@@ -57,10 +58,10 @@ class ReportsView(QWidget):
 
         # Date Range
         params_layout.addWidget(QLabel(_("reports_date_range")))
-        self.start_date_edit = QDateEdit(calendarPopup=True)
+        self.start_date_edit = JalaliDateEdit()
         self.start_date_edit.setDate(QDate.currentDate().addDays(-30))
         params_layout.addWidget(self.start_date_edit)
-        self.end_date_edit = QDateEdit(calendarPopup=True)
+        self.end_date_edit = JalaliDateEdit()
         self.end_date_edit.setDate(QDate.currentDate())
         params_layout.addWidget(self.end_date_edit)
 

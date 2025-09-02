@@ -7,11 +7,12 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QLineEdit, QTableView, QAbstractItemView,
-    QMessageBox, QApplication, QStyle, QDateEdit, QCheckBox, QFrame,
+    QMessageBox, QApplication, QStyle, QCheckBox, QFrame,
     QMenu, QInputDialog
 )
 from PyQt6.QtCore import Qt, QDate, QModelIndex
 from PyQt6.QtGui import QKeySequence, QShortcut
+from ..widgets.jalali_date_edit import JalaliDateEdit
 from sqlalchemy.orm import Session
 
 from ..models.attendance_model import AttendanceTableModel
@@ -86,19 +87,23 @@ class AttendanceView(QWidget):
         filter_layout.addWidget(self.employee_filter_combo)
 
         filter_layout.addWidget(QLabel(_("attendance_filter_start")))
-        self.start_date_edit = QDateEdit(calendarPopup=True)
+        self.start_date_edit = JalaliDateEdit()
+        # default to 30 days ago
         self.start_date_edit.setDate(QDate.currentDate().addDays(-30))
         filter_layout.addWidget(self.start_date_edit)
 
         filter_layout.addWidget(QLabel(_("attendance_filter_end")))
-        self.end_date_edit = QDateEdit(calendarPopup=True)
+        self.end_date_edit = JalaliDateEdit()
         self.end_date_edit.setDate(QDate.currentDate())
         filter_layout.addWidget(self.end_date_edit)
 
         filter_layout.addWidget(QLabel(_("attendance_filter_status")))
-        self.status_present_cb = QCheckBox(_("attendance_filter_present"), checked=True)
-        self.status_absent_cb = QCheckBox(_("attendance_filter_absent"), checked=True)
-        self.status_on_leave_cb = QCheckBox(_("attendance_status_on_leave"), checked=True)
+        self.status_present_cb = QCheckBox(_("attendance_filter_present"))
+        self.status_present_cb.setChecked(True)
+        self.status_absent_cb = QCheckBox(_("attendance_filter_absent"))
+        self.status_absent_cb.setChecked(True)
+        self.status_on_leave_cb = QCheckBox(_("attendance_status_on_leave"))
+        self.status_on_leave_cb.setChecked(True)
         filter_layout.addWidget(self.status_present_cb)
         filter_layout.addWidget(self.status_absent_cb)
         filter_layout.addWidget(self.status_on_leave_cb)
@@ -119,20 +124,18 @@ class AttendanceView(QWidget):
         self.refresh_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         filter_layout.addWidget(self.refresh_button)
 
-        # Connect signals directly to the data loading function
-        for widget in (self.employee_filter_combo, self.start_date_edit, self.end_date_edit,
-                       self.status_present_cb, self.status_absent_cb, self.status_on_leave_cb,
-                       self.search_filter_edit, self.refresh_button):
-            if isinstance(widget, (QComboBox)):
-                widget.currentIndexChanged.connect(self.load_attendance_data)
-            elif isinstance(widget, (QDateEdit)):
-                widget.dateChanged.connect(self.load_attendance_data)
-            elif isinstance(widget, (QCheckBox)):
-                widget.stateChanged.connect(self.load_attendance_data)
-            elif isinstance(widget, QLineEdit):
-                widget.textChanged.connect(self.load_attendance_data)
-            elif isinstance(widget, QPushButton):
-                widget.clicked.connect(self.load_attendance_data)
+        # Explicitly connect signals — robust and clear (works with JalaliDateEdit)
+        self.employee_filter_combo.currentIndexChanged.connect(self.load_attendance_data)
+        # JalaliDateEdit exposes dateChanged(QDate) similar to QDateEdit
+        self.start_date_edit.dateChanged.connect(self.load_attendance_data)
+        self.end_date_edit.dateChanged.connect(self.load_attendance_data)
+
+        self.status_present_cb.stateChanged.connect(self.load_attendance_data)
+        self.status_absent_cb.stateChanged.connect(self.load_attendance_data)
+        self.status_on_leave_cb.stateChanged.connect(self.load_attendance_data)
+
+        self.search_filter_edit.textChanged.connect(self.load_attendance_data)
+        self.refresh_button.clicked.connect(self.load_attendance_data)
 
     def load_filter_data(self):
         """Load data for filter controls (e.g., employee list)."""
@@ -165,14 +168,21 @@ class AttendanceView(QWidget):
         """Load attendance data based on current filter settings."""
         try:
             statuses = []
-            if self.status_present_cb.isChecked(): statuses.append('present')
-            if self.status_absent_cb.isChecked(): statuses.append('absent')
-            if self.status_on_leave_cb.isChecked(): statuses.append('on_leave')
+            if self.status_present_cb.isChecked():
+                statuses.append('present')
+            if self.status_absent_cb.isChecked():
+                statuses.append('absent')
+            if self.status_on_leave_cb.isChecked():
+                statuses.append('on_leave')
+
+            # JalaliDateEdit.date() returns a QDate corresponding to the Gregorian date
+            start_py = self.start_date_edit.date().toPyDate()
+            end_py = self.end_date_edit.date().toPyDate()
 
             self.attendance_model.set_filters(
                 employee_id=self.employee_filter_combo.currentData(),
-                start_date=self.start_date_edit.date().toPyDate(),
-                end_date=self.end_date_edit.date().toPyDate(),
+                start_date=start_py,
+                end_date=end_py,
                 statuses=statuses,
                 search_text=self.search_filter_edit.text().strip()
             )
@@ -189,7 +199,8 @@ class AttendanceView(QWidget):
     def open_context_menu(self, position):
         menu = QMenu()
         index = self.attendance_table.indexAt(position)
-        if not index.isValid(): return
+        if not index.isValid():
+            return
 
         edit_action = menu.addAction(_("edit"))
         delete_action = menu.addAction(_("delete"))
@@ -213,10 +224,15 @@ class AttendanceView(QWidget):
 
     def delete_selected_record(self):
         record = self.get_selected_record()
-        if not record: return
+        if not record:
+            return
 
         emp_name = self.attendance_model.employee_cache.get(record.employee_id, 'Unknown')
-        reply = QMessageBox.question(self, _("confirm_delete_title"), _("confirm_delete_record_message", name=emp_name, date=record.date))
+        reply = QMessageBox.question(
+            self,
+            _("confirm_delete_title"),
+            _("confirm_delete_record_message", name=emp_name, date=record.date)
+        )
         if reply == QMessageBox.StandardButton.Yes:
             try:
                 attendance_service.delete_attendance(record.id)
@@ -227,14 +243,19 @@ class AttendanceView(QWidget):
 
     def duplicate_selected_record(self):
         record = self.get_selected_record()
-        if not record: return
+        if not record:
+            return
 
         try:
             new_record = attendance_service.add_manual_attendance(
-                employee_id=record.employee_id, date=record.date + timedelta(days=1),
-                time_in=record.time_in, time_out=record.time_out,
-                leave_start=record.leave_start, leave_end=record.leave_end,
-                note=f"Duplicated from {record.date}", created_by=self.current_user.username
+                employee_id=record.employee_id,
+                date=record.date + timedelta(days=1),
+                time_in=record.time_in,
+                time_out=record.time_out,
+                leave_start=record.leave_start,
+                leave_end=record.leave_end,
+                note=f"Duplicated from {record.date}",
+                created_by=self.current_user.username
             )
             audit_service.log_action("attendance", new_record.id, "create", {"duplicated_from": record.id}, self.current_user.username)
             self.load_attendance_data()
@@ -248,7 +269,8 @@ class AttendanceView(QWidget):
 
     def handle_record_added(self):
         dialog = self.sender()
-        if not dialog: return
+        if not dialog:
+            return
         try:
             new_data = dialog.get_new_record_data()
             if new_data:
@@ -270,7 +292,8 @@ class AttendanceView(QWidget):
     def handle_record_updated(self, record_id: int, record_data: dict):
         """Handles the signal from the edit dialog."""
         dialog = self.sender()
-        if not dialog: return
+        if not dialog:
+            return
         try:
             self.attendance_model.update_attendance_record(record_id, record_data)
             QMessageBox.information(self, _("success"), _("record_updated_success"))
@@ -314,11 +337,12 @@ class AttendanceView(QWidget):
 
     def copy_selection(self):
         selection = self.attendance_table.selectionModel().selectedIndexes()
-        if not selection: return
-        
+        if not selection:
+            return
+
         rows = sorted(list(set(index.row() for index in selection)))
         cols = sorted(list(set(index.column() for index in selection)))
-        
+
         table_data = [['' for _ in cols] for _ in rows]
         for index in selection:
             row_idx = rows.index(index.row())

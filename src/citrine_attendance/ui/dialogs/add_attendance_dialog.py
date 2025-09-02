@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QDate, QTime, pyqtSignal
 from ...services.employee_service import employee_service
 from ...database import get_db_session, Attendance
 from ..widgets.custom_time_edit import CustomTimeEdit
+from ..widgets.jalali_date_edit import JalaliDateEdit
 from ...locale import _
 import jdatetime
 
@@ -48,7 +49,7 @@ class AttendanceDialogBase(QDialog):
         form_layout.addRow(_("attendance_add_dialog_employee"), self.employee_combo)
         
         date_layout = QHBoxLayout()
-        self.date_edit = QDateEdit(calendarPopup=True)
+        self.date_edit = JalaliDateEdit()
         self.date_edit.setDate(QDate.currentDate())
         self.date_edit.dateChanged.connect(self.update_jalali_label)
         self.jalali_label = QLabel()
