@@ -44,8 +44,8 @@ class AttendanceTableModel(QAbstractTableModel):
             _("attendance_header_time_in"),
             _("attendance_header_time_out"),
             _("attendance_header_leave"),
-            _("Used Leave (Month)"), # New Header
-            _("Remaining Leave (Month)"), # New Header
+            _("attendance_header_used_leave"), # Use translation key
+            _("attendance_header_remaining_leave"), # Use translation key
             _("attendance_header_tardiness"),
             _("attendance_header_main_work"),
             _("attendance_header_overtime"),

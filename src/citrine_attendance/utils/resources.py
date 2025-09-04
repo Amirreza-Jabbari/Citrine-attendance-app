@@ -1,27 +1,37 @@
 # src/citrine_attendance/utils/resources.py
-"""Utility functions for managing application resources."""
-import sys
+import os
 from pathlib import Path
 
 def get_resource_path(relative_path: str) -> Path:
     """
-    Get absolute path to resource, works for dev and for PyInstaller.
-    Assumes resources are in a 'resources' folder relative to the package root.
+    Get the absolute path to a resource file. This function is crucial for
+    reliably locating resources (like icons, fonts) regardless of where the
+    application is run from.
     """
-    # Get the directory of the current file (this utils module)
-    base_path = Path(__file__).parent.parent # Go up two levels to 'citrine_attendance' package root
-    resources_path = base_path / "resources" / relative_path
-    return resources_path.resolve() # Return absolute path
+    # Assumes this file is in src/citrine_attendance/utils.
+    # We go up two levels to get to the 'src/citrine_attendance' directory.
+    base_path = Path(__file__).resolve().parent.parent
+    
+    # Join with the 'resources' directory and the specific relative path.
+    resource_path = base_path / "resources" / relative_path
+    
+    if not resource_path.exists():
+        # Add a warning if the file doesn't exist to make debugging easier.
+        print(f"Warning: Resource not found at path: {resource_path}")
 
-def get_font_path(font_filename: str) -> Path:
-    """Get the path to a font file."""
-    return get_resource_path(f"fonts/{font_filename}")
+    return resource_path
 
-def get_icon_path(icon_filename: str) -> Path:
-    """Get the path to an icon file."""
-    return get_resource_path(f"icons/{icon_filename}") # Create resources/icons/ folder if needed
+def get_icon_path(icon_name: str) -> str:
+    """
+    A convenience function to get the full, absolute path for an icon.
+    It now correctly points to the 'icon' (singular) subfolder.
+    """
+    # CORRECTED: Changed "icons" to "icon" to match your project structure.
+    return str(get_resource_path(f"icon/{icon_name}"))
 
-# Example usage (if run directly):
-# if __name__ == '__main__':
-#     print("Font path:", get_font_path("Vazir-Regular.ttf"))
-#     print("Icon path:", get_icon_path("app_icon.png"))
+def get_font_path(font_name: str) -> str:
+    """
+    A convenience function to get the full, absolute path for a font.
+    """
+    return str(get_resource_path(f"fonts/{font_name}"))
+

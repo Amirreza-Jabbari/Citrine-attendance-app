@@ -189,6 +189,8 @@ TRANSLATIONS = {
         "error_duplicating_record": "Error duplicating record: {error}",
         "error_adding_record": "Error adding record: {error}",
         "error_updating_record": "Error updating record: {error}",
+        "attendance_header_used_leave": "Used Leave",
+        "attendance_header_remaining_leave": "Remaining Leave",
     },
     "fa": {
         "app_title": "زرسهام - حضور و غیاب",
@@ -381,6 +383,8 @@ TRANSLATIONS = {
         "error_duplicating_record": "خطا در تکثیر رکورد: {error}",
         "error_adding_record": "خطا در افزودن رکورد: {error}",
         "error_updating_record": "خطا در به‌روزرسانی رکورد: {error}",
+        "attendance_header_used_leave": "مرخصی استفاده شده",
+        "attendance_header_remaining_leave": "مرخصی باقی مانده",
     },
 }
 

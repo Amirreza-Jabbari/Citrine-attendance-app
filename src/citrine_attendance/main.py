@@ -97,12 +97,12 @@ def main():
     """
     Main function to initialize the Citrine Attendance application.
     """
-    print("Initializing Citrine Attendance App...")
+    print("Initializing Zarsaham Attendance App...")
 
     # 1. Setup logging
     setup_logging()
     logger = logging.getLogger(__name__)
-    logger.info("Starting Citrine Attendance application.")
+    logger.info("Starting Zarsaham Attendance application.")
 
     # 2. Initialize the database
     try:

@@ -1,5 +1,5 @@
 # src/citrine_attendance/ui/main_window.py
-"""Main application window with a modern UI."""
+"""Main application window with a modern UI (light, readable color palette)."""
 import sys
 import logging
 from datetime import timedelta
@@ -26,7 +26,7 @@ from ..services.backup_service import backup_service, BackupServiceError
 from ..locale import _
 
 class MainWindow(QMainWindow):
-    """Main application window with a modern, consistent UI."""
+    """Main application window with a modern, light and readable UI."""
 
     def __init__(self):
         super().__init__()
@@ -37,14 +37,18 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(_("app_title"))
         self.setGeometry(100, 100, 1280, 800)
-        self.setWindowIcon(QIcon(str(get_icon_path("icon.ico"))))
+        try:
+            self.setWindowIcon(QIcon(str(get_icon_path("icon.ico"))))
+        except Exception:
+            # ignore if icon missing during development
+            pass
 
         # Initial placeholder before login
         self.placeholder_widget = QLabel(_("status_initializing"))
         self.placeholder_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Apply base styling for the placeholder
-        self.setStyleSheet("background-color: #2c3e50; font-family: Vazir, Segoe UI, Arial, sans-serif;")
-        self.placeholder_widget.setStyleSheet("font-size: 20px; color: #bdc3c7;")
+        # Apply base styling for the placeholder (light theme)
+        self.setStyleSheet("background-color: #ffffff; font-family: Vazir, 'Segoe UI', Arial, sans-serif;")
+        self.placeholder_widget.setStyleSheet("font-size: 20px; color: #6b7280;")
         self.setCentralWidget(self.placeholder_widget)
         
         self.hide()
@@ -101,24 +105,24 @@ class MainWindow(QMainWindow):
         self.status_bar.setObjectName("statusBar")
         self.setStatusBar(self.status_bar)
 
-        self.switch_view(0) # Default to dashboard
+        self.switch_view(0)  # Default to dashboard
         self.logger.debug("Modern main UI initialized.")
 
     def create_sidebar(self):
-        """Creates the modern sidebar navigation with icons."""
+        """Creates the modern sidebar navigation with icons (light palette)."""
         self.sidebar = QWidget()
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setFixedWidth(220)
+        self.sidebar.setFixedWidth(240)  # a bit wider for better spacing
         
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(10, 15, 10, 10)
-        sidebar_layout.setSpacing(5)
+        sidebar_layout.setContentsMargins(14, 18, 14, 12)
+        sidebar_layout.setSpacing(8)
         
         title_label = QLabel(_("company_name"))
         title_label.setObjectName("sidebarTitle")
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sidebar_layout.addWidget(title_label)
-        sidebar_layout.addSpacing(20)
+        sidebar_layout.addSpacing(12)
 
         # Navigation Buttons
         self.btn_dashboard = self.create_nav_button(_("view_dashboard"), "grid.svg", 0)
@@ -142,9 +146,12 @@ class MainWindow(QMainWindow):
         user_frame = QFrame()
         user_frame.setObjectName("userFrame")
         user_frame_layout = QVBoxLayout(user_frame)
-        self.user_label = QLabel(self.current_user.username)
+        # Guard against None current_user in some paths
+        username_text = getattr(self.current_user, "username", _("guest")) if self.current_user else _("guest")
+        role_text = getattr(self.current_user, "role", "operator").capitalize() if self.current_user else _("operator")
+        self.user_label = QLabel(username_text)
         self.user_label.setObjectName("userLabel")
-        self.role_label = QLabel(self.current_user.role.capitalize())
+        self.role_label = QLabel(role_text)
         self.role_label.setObjectName("roleLabel")
         user_frame_layout.addWidget(self.user_label)
         user_frame_layout.addWidget(self.role_label)
@@ -156,18 +163,19 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.btn_exit)
 
     def create_nav_button(self, text: str, icon_name: str, index: int) -> QPushButton:
-        """Factory method for creating a sidebar navigation button."""
+        """Factory method for creating a sidebar navigation button (light theme friendly)."""
         button = QPushButton(text)
         button.setObjectName("navButton")
         button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setIconSize(QSize(20, 20))
+        button.setIconSize(QSize(18, 18))
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         try:
             button.setIcon(QIcon(str(get_icon_path(icon_name))))
         except Exception as e:
             self.logger.error(f"Could not load icon {icon_name}: {e}")
         
-        if index != -1: # -1 is for non-view buttons like exit
-            button.clicked.connect(lambda: self.switch_view(index))
+        if index != -1:  # -1 is for non-view buttons like exit
+            button.clicked.connect(lambda _, i=index: self.switch_view(i))
         return button
 
     def create_main_views(self):
@@ -199,20 +207,31 @@ class MainWindow(QMainWindow):
             btn.style().polish(btn)
 
         # Refresh specific views when they become active
-        if index == 1: # Employees view
-            self.employees_view.load_employees()
-        elif index == 4: # Backups view
-            self.backups_view.refresh_view()
+        if index == 1:  # Employees view
+            try:
+                self.employees_view.load_employees()
+            except Exception:
+                self.logger.exception("Failed to refresh employees view.")
+        elif index == 4:  # Backups view
+            try:
+                self.backups_view.refresh_view()
+            except Exception:
+                self.logger.exception("Failed to refresh backups view.")
         
         view_names = [_("view_dashboard"), _("view_employees"), _("view_attendance"),
                       _("view_reports"), _("view_backups"), _("view_archive"), _("view_settings")]
-        self.status_bar.showMessage(f"{_('status_view')}: {view_names[index]}")
+        # ensure index in range
+        if 0 <= index < len(view_names):
+            self.status_bar.showMessage(f"{_('status_view')}: {view_names[index]}")
+        else:
+            self.status_bar.clearMessage()
 
     def update_ui_for_user_role(self):
         """Shows or hides UI elements based on the user's role."""
-        is_admin = self.current_user.role == "admin"
+        is_admin = getattr(self.current_user, "role", "") == "admin"
         self.logger.debug(f"Updating UI for role: {'Admin' if is_admin else 'Operator'}")
         
+        # Hide admin-only buttons for non-admins
         self.btn_reports.setVisible(is_admin)
         self.btn_backups.setVisible(is_admin)
         self.btn_archive.setVisible(is_admin)
@@ -220,7 +239,7 @@ class MainWindow(QMainWindow):
 
     def setup_automatic_backup(self):
         """Configures and starts the automatic backup timer."""
-        if self.current_user.role != "admin":
+        if getattr(self.current_user, "role", "") != "admin":
             return
 
         try:
@@ -232,14 +251,14 @@ class MainWindow(QMainWindow):
             interval_ms = int(timedelta(days=frequency_days).total_seconds() * 1000)
             self.backup_timer = QTimer(self)
             self.backup_timer.timeout.connect(self.perform_scheduled_backup)
-            self.backup_timer.start(max(interval_ms, 60000)) # Minimum 1 minute interval
+            self.backup_timer.start(max(interval_ms, 60000))  # Minimum 1 minute interval
             self.logger.info(f"Automatic backup scheduled every {frequency_days} day(s).")
         except Exception as e:
             self.logger.error(f"Failed to setup automatic backup timer: {e}", exc_info=True)
 
     def perform_scheduled_backup(self):
         """Performs a scheduled backup via the backup service."""
-        if self.current_user.role != "admin":
+        if getattr(self.current_user, "role", "") != "admin":
             return
         try:
             backup_path = backup_service.create_backup(manual=False)
@@ -249,8 +268,11 @@ class MainWindow(QMainWindow):
 
     def connect_signals(self):
         """Connects signals between different views."""
-        self.employees_view.employee_changed.connect(self.attendance_view.load_filter_data)
-        self.employees_view.employee_changed.connect(self.dashboard_view.refresh_data)
+        try:
+            self.employees_view.employee_changed.connect(self.attendance_view.load_filter_data)
+            self.employees_view.employee_changed.connect(self.dashboard_view.refresh_data)
+        except Exception:
+            self.logger.debug("Could not connect some signals (views may not implement expected signals).", exc_info=True)
 
     def load_resources(self):
         """Loads application-wide resources like fonts."""
@@ -262,186 +284,237 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Error loading resources: {e}", exc_info=True)
 
     def apply_stylesheet(self):
-        """Applies the modern dark theme stylesheet to the main window and its children."""
+        """Applies a modern light theme stylesheet to the main window and its children."""
+        # Color choices aimed for: high contrast text, calm light backgrounds, clear accents.
         self.setStyleSheet("""
+            /* --- Window + Dialogs --- */
             QMainWindow, QDialog {
-                background-color: #2c3e50;
-                font-family: Vazir, Segoe UI, Arial, sans-serif;
-                color: #ecf0f1;
+                background-color: #ffffff; /* base white */
+                font-family: Vazir, 'Segoe UI', Arial, sans-serif;
+                color: #0f172a; /* dark slate for high contrast */
             }
+
+            /* --- Sidebar --- */
             #sidebar {
-                background-color: #2c3e50;
-                border-right: 1px solid #34495e;
+                background-color: #f4f6f8; /* light gray */
+                border-right: 1px solid #e6edf3;
             }
             #sidebarTitle {
-                font-size: 24px;
-                font-weight: bold;
-                color: #ecf0f1;
+                font-size: 20px;
+                font-weight: 700;
+                color: #0f172a; /* strong heading color */
+                padding: 6px 0;
             }
+
+            /* --- Navigation Buttons --- */
             QPushButton#navButton {
-                color: #bdc3c7;
+                color: #0f172a;
                 background-color: transparent;
                 border: none;
-                padding: 12px;
+                padding: 10px 14px;
                 border-radius: 8px;
                 text-align: left;
                 font-size: 14px;
+                min-height: 40px;
+            }
+            /* remove default dotted focus look and replace with subtle highlight */
+            QPushButton#navButton:focus {
+                outline: none;
+                border-left: 4px solid rgba(11,109,243,0.08);
+                background-color: #f7fbff;
             }
             QPushButton#navButton:hover {
-                background-color: #34495e;
-                color: #ecf0f1;
+                background-color: #f0f6ff; /* soft blue hover */
+                color: #0b6df3; /* accent color on hover */
             }
+            /* property-based active state (Qt turns booleans into "true"/"false") */
             QPushButton#navButton[active="true"] {
-                background-color: #3498db;
-                color: white;
-                font-weight: bold;
+                background-color: #eaf4ff; /* subtle active background */
+                color: #0b6df3;
+                font-weight: 700;
+                border-left: 4px solid #0b6df3;
+                padding-left: 12px;
             }
+
+            /* --- Content Area --- */
             #contentArea > QWidget {
-                background-color: #34495e;
-                color: #ecf0f1;
+                background-color: #ffffff;
+                color: #0f172a;
             }
+
+            /* --- Status Bar --- */
             QStatusBar#statusBar {
-                background-color: #2c3e50;
-                color: #bdc3c7;
+                background-color: #ffffff;
+                color: #475569;
+                border-top: 1px solid #eef2f7;
+                padding: 4px 8px;
             }
             QStatusBar#statusBar::item {
                 border: 0px;
             }
+
+            /* --- User Panel --- */
             #userFrame {
-                border-top: 1px solid #34495e;
-                padding-top: 10px;
-                margin-top: 10px;
+                border-top: 1px solid #eef2f7;
+                padding-top: 12px;
+                margin-top: 12px;
             }
             #userLabel {
                 font-size: 14px;
-                font-weight: bold;
-                color: #ecf0f1;
+                font-weight: 700;
+                color: #0f172a;
             }
             #roleLabel {
                 font-size: 12px;
-                color: #bdc3c7;
+                color: #6b7280;
             }
 
-            /* === Global Widget Styles for Views === */
+            /* === Global Widget Styles for Views (light + readable) === */
             QLabel {
-                color: #ecf0f1;
+                color: #0f172a;
                 font-size: 14px;
                 background-color: transparent;
             }
             QLabel#viewTitle {
                 font-size: 22px;
-                font-weight: bold;
+                font-weight: 700;
                 padding-bottom: 10px;
-                border-bottom: 1px solid #4a627a;
-                margin-bottom: 15px;
+                border-bottom: 1px solid #e6edf3;
+                margin-bottom: 14px;
+                color: #0b2545;
             }
+
+            /* Primary buttons (blue) */
             QPushButton {
-                background-color: #3498db;
+                background-color: #0b6df3; /* accessible, saturated blue */
                 color: white;
                 font-size: 14px;
-                font-weight: bold;
+                font-weight: 600;
                 border: none;
                 border-radius: 8px;
-                padding: 10px 15px;
+                padding: 8px 14px;
+                min-height: 36px;
             }
             QPushButton:hover {
-                background-color: #2980b9;
+                background-color: #095bd0;
             }
             QPushButton:pressed {
-                background-color: #1f618d;
+                background-color: #084bb0;
             }
             QPushButton:disabled {
-                background-color: #566573;
-                color: #95a5a6;
+                background-color: #c7d2e8;
+                color: #6b7280;
             }
-            
-            /* Specific Button Colors */
-            QPushButton#deleteButton { background-color: #c0392b; }
-            QPushButton#deleteButton:hover { background-color: #a93226; }
-            QPushButton#editButton { background-color: #f39c12; }
-            QPushButton#editButton:hover { background-color: #d68910; }
-            QPushButton#saveButton { background-color: #27ae60; }
-            QPushButton#saveButton:hover { background-color: #229954; }
 
+            /* Specific Button Colors */
+            QPushButton#deleteButton { background-color: #ef4444; } /* red */
+            QPushButton#deleteButton:hover { background-color: #dc2626; }
+            QPushButton#editButton { background-color: #f59e0b; } /* amber */
+            QPushButton#editButton:hover { background-color: #d97706; }
+            QPushButton#saveButton { background-color: #10b981; } /* green */
+            QPushButton#saveButton:hover { background-color: #059669; }
+
+            /* Form inputs - light with clear borders */
             QLineEdit, QComboBox, QDateEdit, QTimeEdit, QSpinBox {
-                background-color: #2c3e50;
-                color: #ecf0f1;
-                border: 1px solid #4a627a;
+                background-color: #ffffff;
+                color: #0b1220;
+                border: 1px solid #d1d5db;
                 border-radius: 8px;
                 padding: 8px;
                 font-size: 14px;
+                min-height: 34px;
             }
             QLineEdit:focus, QComboBox:focus, QDateEdit:focus, QTimeEdit:focus, QSpinBox:focus {
-                border: 1px solid #3498db;
+                border: 1px solid #0b6df3; /* blue focus ring */
             }
+
+            /* Dropdown arrow color + popup background */
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #0b1220;
+                selection-background-color: #e6f0ff;
+            }
+
+            /* Table styling - white rows + subtle stripes */
             QTableView {
-                background-color: #2c3e50;
-                color: #ecf0f1;
-                border: 1px solid #4a627a;
-                gridline-color: #4a627a;
+                background-color: #ffffff;
+                color: #0b1220;
+                border: 1px solid #e6edf3;
+                gridline-color: #e6edf3;
                 border-radius: 8px;
-                selection-background-color: #3498db;
+                selection-background-color: #d6e9ff;
+                selection-color: #0b2545;
             }
             QTableView::item {
-                padding: 5px;
-                border-bottom: 1px solid #4a627a;
+                padding: 6px;
+                border-bottom: 1px solid #f1f5f9;
             }
             QTableView::item:alternate {
-                background-color: #34495e; /* Lighter shade for alternating rows */
+                background-color: #fbfdff; /* very subtle alternate */
             }
             QHeaderView::section {
-                background-color: #34495e;
-                color: #ecf0f1;
+                background-color: #f8fafc;
+                color: #0f172a;
                 padding: 8px;
-                border: 1px solid #4a627a;
-                font-weight: bold;
+                border: 1px solid #e6edf3;
+                font-weight: 600;
             }
+
+            /* Group boxes and tabs */
             QGroupBox {
-                border: 1px solid #4a627a;
+                border: 1px solid #e6edf3;
                 border-radius: 8px;
                 margin-top: 10px;
                 padding: 10px;
                 padding-top: 25px;
+                background-color: #ffffff;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
                 padding: 0 10px;
                 margin-left: 10px;
-                color: #ecf0f1;
-                font-weight: bold;
+                color: #0f172a;
+                font-weight: 700;
             }
             QTabWidget::pane {
-                border: 1px solid #4a627a;
+                border: 1px solid #e6edf3;
                 border-top: none;
-                background-color: #34495e;
-                padding: 15px;
+                background-color: #ffffff;
+                padding: 12px;
             }
             QTabBar::tab {
-                background: #2c3e50;
-                color: #bdc3c7;
-                border: 1px solid #4a627a;
+                background: #f4f6f8;
+                color: #0f172a;
+                border: 1px solid #e6edf3;
                 border-bottom: none;
-                padding: 10px 20px;
+                padding: 8px 16px;
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
-                margin-right: 2px;
+                margin-right: 4px;
             }
             QTabBar::tab:hover {
-                background: #34495e;
+                background: #eef6ff;
+                color: #0b6df3;
             }
             QTabBar::tab:selected {
-                background: #34495e;
-                color: #ecf0f1;
-                font-weight: bold;
+                background: #ffffff;
+                color: #0b6df3;
+                font-weight: 700;
             }
+
             QTextEdit {
-                background-color: #2c3e50;
-                color: #ecf0f1;
-                border: 1px solid #4a627a;
+                background-color: #ffffff;
+                color: #0b1220;
+                border: 1px solid #d1d5db;
                 border-radius: 8px;
                 padding: 8px;
                 font-family: "Courier New", Courier, monospace;
+            }
+
+            /* Accessibility helpers: increase clickable area for small widgets */
+            QPushButton, QComboBox, QLineEdit, QSpinBox {
+                min-height: 36px;
             }
         """)
 
@@ -458,3 +531,15 @@ class MainWindow(QMainWindow):
         else:
             event.ignore()
 
+# If run directly (for development/testing), allow starting the app:
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    app = QApplication(sys.argv)
+    mw = MainWindow()
+    # For quick testing without login dialog, you can inject a fake user:
+    # try:
+    #     mw.on_login_successful(User(username="dev", role="admin"))
+    # except Exception:
+    #     pass
+    mw.show()
+    sys.exit(app.exec())

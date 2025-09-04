@@ -6,8 +6,8 @@ import logging
 from pathlib import Path
 
 # --- Application Metadata ---
-APP_NAME = "CitrineAttendance"
-APP_AUTHOR = "Citrine" # Or your name/company
+APP_NAME = "ZarsahamAttendance"
+APP_AUTHOR = "Zarsaham" # Or your name/company
 
 # --- Default Settings ---
 DEFAULT_SETTINGS = {
@@ -17,8 +17,8 @@ DEFAULT_SETTINGS = {
     "backup_retention_count": 10, # Keep last 10 backups
     "db_path_override": None, # Use default if None
     "enable_backup_encryption": False,
-    "default_launch_start_time": "14:30", # New: Default launch start time
-    "default_launch_end_time": "16:30",   # New: Default launch end time
+    "default_launch_start_time": "14:30", # Default launch start time
+    "default_launch_end_time": "16:30",   # Default launch end time
     "workday_hours": 8,
     "late_threshold_time": "10:00",
 }

@@ -113,7 +113,7 @@ class BackupsView(QWidget):
         # --- Top Bar ---
         top_layout = QHBoxLayout()
         self.create_backup_btn = QPushButton("Create Backup Now")
-        self.create_backup_btn.setStyleSheet(self.get_button_style("#11563a"))
+        self.create_backup_btn.setStyleSheet(self.get_button_style("#e5e7eb"))
         self.create_backup_btn.clicked.connect(self.create_manual_backup)
         top_layout.addWidget(self.create_backup_btn)
 
