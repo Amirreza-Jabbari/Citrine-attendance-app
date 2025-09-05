@@ -145,8 +145,20 @@ class SettingsView(QWidget):
             config.update_setting("language", self.language_combo.currentData())
             config.update_setting("date_format", self.date_format_combo.currentData())
             config.update_setting("workday_hours", self.workday_hours_spinbox.value())
-            config.update_setting("default_launch_start_time", self.launch_start_edit.time().toString("HH:mm"))
-            config.update_setting("default_launch_end_time", self.launch_end_edit.time().toString("HH:mm"))
+            # Ensure the saved time strings use ASCII digits only (normalize)
+            def _normalize_time_str_for_save(qtime):
+                s = qtime.toString("HH:mm")
+                trans_table = str.maketrans({
+                    '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9',
+                    '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9'
+                })
+                return s.translate(trans_table)
+
+            start_s = _normalize_time_str_for_save(self.launch_start_edit.time())
+            end_s = _normalize_time_str_for_save(self.launch_end_edit.time())
+            config.update_setting("default_launch_start_time", start_s)
+            config.update_setting("default_launch_end_time", end_s)
+
             config.update_setting("late_threshold_time", self.late_threshold_edit.time().toString("HH:mm"))
             config.update_setting("backup_frequency_days", self.backup_freq_spinbox.value())
             config.update_setting("backup_retention_count", self.backup_retention_spinbox.value())

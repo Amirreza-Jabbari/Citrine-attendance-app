@@ -43,22 +43,53 @@ class AttendanceService:
 
     def _calculate_all_fields(self, record: Attendance):
         """
-        Calculates derived fields for an attendance record.
-
-        Key points of the algorithm:
-        - leave_duration_minutes: minutes of leave overlapping with the attendance window (time_in..time_out)
-        - launch_duration_minutes: minutes of launch (lunch) overlapping with the attendance window
-        - duration_minutes: total minutes between time_in and time_out (if both present)
-        - net_work_minutes = duration - launch_overlap - leave_overlap
-        - tardiness_minutes = minutes late relative to configured base_start_time (or late_threshold_time)
-        - main_work_minutes is computed so that (tardiness + main_work) == workday_minutes whenever possible:
-            desired_main_work = max(0, workday_minutes - tardiness)
-            main_work = min(net_work_minutes, desired_main_work)
-        - overtime_minutes (IMPORTANT - per your request): overtime starts after
-            time_in + workday_hours (i.e. lunch is NOT subtracted from overtime threshold).
-            overtime = max(0, time_out - (time_in + workday_hours))
+        Robust calculation of derived attendance fields with correct leave handling.
+        - Computes leave overlap with an appropriate work window (real attendance window or expected window).
+        - Normalizes string times (supports Persian/Arabic digits).
+        - Ensures overtime threshold is calculated after workday + launch + counted leave.
         """
-        # Reset fields
+
+        import datetime
+        import logging
+        logger = logging.getLogger(__name__)
+
+        def _norm_digits(s: str) -> str:
+            if s is None:
+                return ""
+            s = str(s).strip()
+            trans = str.maketrans({
+                '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9',
+                '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9'
+            })
+            return s.translate(trans)
+
+        def _to_time(obj):
+            """Return a datetime.time from either a datetime.time or a string 'HH:MM' (tolerant)."""
+            if obj is None:
+                return None
+            if isinstance(obj, datetime.time):
+                return obj
+            s = _norm_digits(obj)
+            if not s:
+                return None
+            try:
+                parts = s.split(':')
+                if len(parts) != 2:
+                    # permissive parse (allow 'HHMM' or 'H:MM' variants)
+                    import re
+                    m = re.search(r'(\d{1,2}).?[:\u061b\-\. ]?(\d{1,2})', s)
+                    if not m:
+                        raise ValueError(f"Bad time format: {s}")
+                    parts = [m.group(1), m.group(2)]
+                h, m = int(parts[0]), int(parts[1])
+                if not (0 <= h <= 23 and 0 <= m <= 59):
+                    raise ValueError(f"Time out of range: {s}")
+                return datetime.time(h, m)
+            except Exception as e:
+                logger.warning(f"Failed to parse time value '{obj}': {e}")
+                return None
+
+        # Reset fields first (keep consistent types)
         record.duration_minutes = None
         record.launch_duration_minutes = None
         record.leave_duration_minutes = None
@@ -67,138 +98,224 @@ class AttendanceService:
         record.overtime_minutes = None
         record.status = self.STATUS_ABSENT
 
-        # If no time_in and leave exists, possibly mark on leave
-        if not record.time_in:
-            # compute leave_minutes even if no time_in (useful for leave-only records)
-            leave_minutes = 0
-            if record.leave_start and record.leave_end:
-                try:
-                    leave_dt_start = datetime.datetime.combine(record.date, record.leave_start)
-                    leave_dt_end = datetime.datetime.combine(record.date, record.leave_end)
-                    if leave_dt_end <= leave_dt_start:
-                        # assume next day
-                        leave_dt_end += datetime.timedelta(days=1)
-                    leave_minutes = int((leave_dt_end - leave_dt_start).total_seconds() / 60)
-                except Exception:
-                    leave_minutes = 0
-            record.leave_duration_minutes = int(leave_minutes)
-            if record.leave_duration_minutes and not record.time_in:
-                record.status = self.STATUS_ON_LEAVE
-            return
+        # convert record times (handle strings from DB or None)
+        time_in = _to_time(record.time_in)
+        time_out = _to_time(record.time_out)
+        leave_start = _to_time(record.leave_start)
+        leave_end = _to_time(record.leave_end)
 
-        # Combine time_in/date
-        dt_in = datetime.datetime.combine(record.date, record.time_in)
-
-        # If time_out invalid or missing, set status partial after calculating tardiness and leave overlap if possible
-        # Compute tardiness relative to configured base_start_time (fall back to late_threshold_time)
-        base_start_str = config.settings.get("base_start_time", config.settings.get("late_threshold_time", "10:00"))
-        try:
-            bh, bm = map(int, base_start_str.split(':'))
-            base_dt = dt_in.replace(hour=bh, minute=bm, second=0, microsecond=0)
-            tardiness_minutes = int(max(0, (dt_in - base_dt).total_seconds() / 60))
-        except Exception:
-            tardiness_minutes = 0
-        record.tardiness_minutes = int(tardiness_minutes)
-
-        # If no valid time_out, leave other numeric values None and return partial
-        if not (record.time_out and record.time_out > record.time_in):
-            record.status = self.STATUS_PARTIAL
-            # compute leave_duration_minutes if provided (full overlap with attendance window can't be computed without time_out)
-            # but try to compute partial overlap if leave times exist
-            leave_minutes = 0
-            if record.leave_start and record.leave_end:
-                try:
-                    leave_dt_start = datetime.datetime.combine(record.date, record.leave_start)
-                    leave_dt_end = datetime.datetime.combine(record.date, record.leave_end)
-                    if leave_dt_end <= leave_dt_start:
-                        leave_dt_end += datetime.timedelta(days=1)
-                    # If only time_in exists, assume attendance window from dt_in to dt_in (0)
-                    # So leave overlap is 0 in absence of time_out
-                    leave_minutes = 0
-                except Exception:
-                    leave_minutes = 0
-            record.leave_duration_minutes = int(leave_minutes)
-            return
-
-        # We have valid time_in and time_out
-        dt_out = datetime.datetime.combine(record.date, record.time_out)
-        if dt_out <= dt_in:
-            # if time_out on next day (time_out <= time_in), assume next day
-            dt_out += datetime.timedelta(days=1)
-
-        # Total duration between in and out
-        total_duration_minutes = int((dt_out - dt_in).total_seconds() / 60)
-        record.duration_minutes = int(total_duration_minutes)
-
-        # --- Leave overlap with attendance window
-        leave_minutes = 0
-        if record.leave_start and record.leave_end:
-            try:
-                leave_dt_start = datetime.datetime.combine(record.date, record.leave_start)
-                leave_dt_end = datetime.datetime.combine(record.date, record.leave_end)
-                if leave_dt_end <= leave_dt_start:
-                    leave_dt_end += datetime.timedelta(days=1)
-                overlap_start = max(dt_in, leave_dt_start)
-                overlap_end = min(dt_out, leave_dt_end)
-                if overlap_end > overlap_start:
-                    leave_minutes = int((overlap_end - overlap_start).total_seconds() / 60)
-            except Exception:
-                leave_minutes = 0
-        record.leave_duration_minutes = int(leave_minutes)
-
-        # --- Launch (lunch) overlap calculation
-        launch_minutes = 0
-        try:
-            start_str = config.settings.get("default_launch_start_time", "14:00")
-            end_str = config.settings.get("default_launch_end_time", "16:00")
-            h_start, m_start = map(int, start_str.split(':'))
-            h_end, m_end = map(int, end_str.split(':'))
-            launch_start_time = datetime.time(h_start, m_start)
-            launch_end_time = datetime.time(h_end, m_end)
-            launch_start_dt = datetime.datetime.combine(record.date, launch_start_time)
-            launch_end_dt = datetime.datetime.combine(record.date, launch_end_time)
-            if launch_end_dt <= launch_start_dt:
-                launch_end_dt += datetime.timedelta(days=1)
-
-            overlap_start = max(dt_in, launch_start_dt)
-            overlap_end = min(dt_out, launch_end_dt)
-            if overlap_end > overlap_start:
-                launch_minutes = int((overlap_end - overlap_start).total_seconds() / 60)
-        except Exception:
-            launch_minutes = 0
-        record.launch_duration_minutes = int(launch_minutes)
-
-        # --- Net work = total duration - lunch overlap - leave overlap
-        net_work_minutes = max(0, total_duration_minutes - launch_minutes - leave_minutes)
-
-        # --- Workday minutes from config
+        # Workday minutes from config (default 8 hours)
         try:
             workday_hours = int(config.settings.get("workday_hours", 8))
         except Exception:
             workday_hours = 8
         workday_minutes = workday_hours * 60
 
-        # --- Main work: ensure tardiness + main_work == workday when possible
+        # --- Launch (lunch) overlap: tolerant config keys + digit normalization
+        launch_candidates_start = [
+            config.settings.get("default_launch_start_time"),
+            config.settings.get("default_lunch_start_time"),
+            config.settings.get("launch_start_time"),
+            config.settings.get("launch_start"),
+        ]
+        launch_candidates_end = [
+            config.settings.get("default_launch_end_time"),
+            config.settings.get("default_lunch_end_time"),
+            config.settings.get("launch_end_time"),
+            config.settings.get("launch_end"),
+        ]
+        def _first_nonempty(lst, fallback):
+            for x in lst:
+                if x:
+                    return x
+            return fallback
+
+        start_str = _first_nonempty(launch_candidates_start, "14:00")
+        end_str = _first_nonempty(launch_candidates_end, "16:00")
+
+        try:
+            s = _norm_digits(start_str); e = _norm_digits(end_str)
+            sh, sm = map(int, s.split(':')); eh, em = map(int, e.split(':'))
+            launch_start_time = datetime.time(sh, sm)
+            launch_end_time = datetime.time(eh, em)
+        except Exception as e:
+            logger.warning(f"Failed to parse launch times from settings '{start_str}'/'{end_str}': {e}")
+            # defaults
+            launch_start_time = datetime.time(14, 0)
+            launch_end_time = datetime.time(16, 0)
+
+        # Helper to compute overlap between two datetimes (returns minutes)
+        def _overlap_minutes(a_start: datetime.datetime, a_end: datetime.datetime, b_start: datetime.datetime, b_end: datetime.datetime) -> int:
+            start = max(a_start, b_start)
+            end = min(a_end, b_end)
+            return int((end - start).total_seconds() / 60) if end > start else 0
+
+        # Helper to normalize leave interval datetimes (handles cross-day by adding day if end <= start)
+        def _normalize_interval(date_obj: datetime.date, t_start: datetime.time, t_end: datetime.time):
+            s_dt = datetime.datetime.combine(date_obj, t_start)
+            e_dt = datetime.datetime.combine(date_obj, t_end)
+            if e_dt <= s_dt:
+                e_dt += datetime.timedelta(days=1)
+            return s_dt, e_dt
+
+        # If no time_in: handle "leave only" scenario by counting leave overlap with standard expected work window
+        if not time_in:
+            # default base start for expected window (use base_start_time or late_threshold_time or 09:00)
+            base_start_str = config.settings.get("base_start_time", config.settings.get("late_threshold_time", "09:00"))
+            try:
+                bstr = _norm_digits(base_start_str)
+                bh, bm = map(int, bstr.split(':'))
+                base_start_time = datetime.time(bh, bm)
+            except Exception as e:
+                logger.warning(f"Failed to parse base start time '{base_start_str}': {e}")
+                base_start_time = datetime.time(9, 0)
+
+            # expected work window: base_start_time -> + workday + launch duration
+            launch_s_dt, launch_e_dt = _normalize_interval(record.date, launch_start_time, launch_end_time)
+            launch_minutes_full = int((launch_e_dt - launch_s_dt).total_seconds() / 60)
+
+            expected_start_dt = datetime.datetime.combine(record.date, base_start_time)
+            expected_end_dt = expected_start_dt + datetime.timedelta(minutes=(workday_minutes + launch_minutes_full))
+
+            # compute leave overlap with expected window
+            leave_minutes = 0
+            if leave_start and leave_end:
+                try:
+                    ls_dt, le_dt = _normalize_interval(record.date, leave_start, leave_end)
+                    leave_minutes = _overlap_minutes(expected_start_dt, expected_end_dt, ls_dt, le_dt)
+                except Exception as e:
+                    logger.warning(f"Error computing leave-only duration for record {getattr(record,'id',None)}: {e}")
+                    leave_minutes = 0
+
+            record.leave_duration_minutes = int(leave_minutes)
+            # count launch duration as 0 when no clock-in (we only count launch when attendance exists)
+            record.launch_duration_minutes = 0
+            record.duration_minutes = 0
+            record.tardiness_minutes = 0
+            record.main_work_minutes = 0
+            record.overtime_minutes = 0
+
+            if record.leave_duration_minutes and record.leave_duration_minutes > 0:
+                record.status = self.STATUS_ON_LEAVE
+            else:
+                record.status = self.STATUS_ABSENT
+            return
+
+        # Now we have time_in (whether time_out exists or not)
+        try:
+            dt_in = datetime.datetime.combine(record.date, time_in)
+        except Exception as e:
+            logger.exception(f"Invalid time_in for record {getattr(record,'id',None)}: {e}")
+            return
+
+        # tardiness: base start time comes from config: prefer base_start_time, fall back to late_threshold_time
+        base_start_str = config.settings.get("base_start_time", config.settings.get("late_threshold_time", "09:00"))
+        try:
+            bstr = _norm_digits(base_start_str)
+            bh, bm = map(int, bstr.split(':'))
+            base_dt = datetime.datetime.combine(record.date, datetime.time(bh, bm))
+            # If base time is logically after dt_in because dt_in rolled to next day, keep day aligned
+            record.tardiness_minutes = int(max(0, (dt_in - base_dt).total_seconds() / 60))
+        except Exception as e:
+            logger.warning(f"Failed to parse base start/late threshold '{base_start_str}': {e}")
+            record.tardiness_minutes = 0
+
+        # Prepare launch interval for this date
+        launch_start_dt = datetime.datetime.combine(record.date, launch_start_time)
+        launch_end_dt = datetime.datetime.combine(record.date, launch_end_time)
+        if launch_end_dt <= launch_start_dt:
+            launch_end_dt += datetime.timedelta(days=1)
+        launch_minutes_full = int((launch_end_dt - launch_start_dt).total_seconds() / 60)
+
+        # If time_out missing: assume expected end (dt_in + workday + launch) for the purpose of calculating overlaps
+        expected_dt_out = dt_in + datetime.timedelta(minutes=(workday_minutes + launch_minutes_full))
+
+        if not time_out:
+            # partial record: treat dt_out as expected end for overlap calculations but mark as partial
+            dt_out = expected_dt_out
+            is_partial = True
+        else:
+            dt_out = datetime.datetime.combine(record.date, time_out)
+            if dt_out <= dt_in:
+                dt_out += datetime.timedelta(days=1)
+            is_partial = False
+
+        # total duration between dt_in and dt_out (for stored actual clocked out records it's real; for missing time_out it's expected duration)
+        total_duration_minutes = int((dt_out - dt_in).total_seconds() / 60)
+        record.duration_minutes = int(total_duration_minutes)
+
+        # --- Leave overlap
+        # Robust logging and strict guards: leave is only counted when it intersects the attendance window [dt_in, dt_out]
+        leave_minutes = 0
+        if leave_start and leave_end:
+            try:
+                ls_dt, le_dt = _normalize_interval(record.date, leave_start, leave_end)
+
+                # DEBUG: log the datetimes used so you can inspect them in logs
+                logger.debug(
+                    f"Computing leave overlap for record id={getattr(record,'id',None)} "
+                    f"dt_in={dt_in.isoformat()} dt_out={dt_out.isoformat()} "
+                    f"leave_start={ls_dt.isoformat()} leave_end={le_dt.isoformat()}"
+                )
+
+                # If the leave interval is completely outside attendance window, leave_minutes stays 0
+                # Overlap function already does that, but we keep explicit check for clarity and to avoid accidental day shifts:
+                if le_dt <= dt_in or ls_dt >= dt_out:
+                    # no overlap
+                    leave_minutes = 0
+                    logger.debug(f"No leave overlap (leave outside attendance window) for record id={getattr(record,'id',None)}")
+                else:
+                    # compute the precise overlap
+                    leave_minutes = _overlap_minutes(dt_in, dt_out, ls_dt, le_dt)
+                    logger.debug(f"Leave overlap minutes computed={leave_minutes} for record id={getattr(record,'id',None)}")
+            except Exception as e:
+                logger.warning(f"Error computing leave overlap for record {getattr(record,'id',None)}: {e}")
+                leave_minutes = 0
+        record.leave_duration_minutes = int(leave_minutes)
+
+        # --- Launch (lunch) overlap WITHIN the attendance window
+        try:
+            launch_overlap = _overlap_minutes(dt_in, dt_out, launch_start_dt, launch_end_dt)
+            launch_minutes = int(launch_overlap)
+        except Exception as e:
+            logger.warning(f"Failed to compute launch overlap for record {getattr(record,'id',None)} using '{start_str}'/'{end_str}': {e}")
+            launch_minutes = 0
+        record.launch_duration_minutes = int(launch_minutes)
+
+        # net work: total minus counted launch and counted leave (never negative)
+        net_work_minutes = max(0, total_duration_minutes - launch_minutes - leave_minutes)
+
+        # main work (ensures tardiness + main_work == workday when possible)
         desired_main_work = max(0, workday_minutes - int(record.tardiness_minutes or 0))
         main_work_minutes = min(net_work_minutes, desired_main_work)
         record.main_work_minutes = int(main_work_minutes)
 
-        # --- Overtime: per requested rule - overtime starts at (time_in + workday_hours)
-        # Note: lunch is NOT subtracted from the overtime threshold (this matches the requirement)
+        # --- Overtime: starts after workday_minutes + launch_minutes + counted leave_minutes
         overtime_minutes = 0
         try:
-            overtime_start_dt = dt_in + datetime.timedelta(minutes=workday_minutes)
-            if dt_out > overtime_start_dt:
-                overtime_minutes = int((dt_out - overtime_start_dt).total_seconds() / 60)
+            overtime_threshold_dt = dt_in + datetime.timedelta(minutes=(workday_minutes + launch_minutes + leave_minutes))
+            if dt_out > overtime_threshold_dt:
+                overtime_minutes = int((dt_out - overtime_threshold_dt).total_seconds() / 60)
             else:
                 overtime_minutes = 0
-        except Exception:
-            # fallback: compute overtime from net_work - workday
+        except Exception as e:
+            logger.warning(f"Overtime calc fallback for record {getattr(record,'id',None)}: {e}")
             overtime_minutes = max(0, net_work_minutes - workday_minutes)
         record.overtime_minutes = int(overtime_minutes)
 
-        # Final status
-        record.status = self.STATUS_PRESENT if (record.time_in and record.time_out) else self.STATUS_PARTIAL
+        # status
+        if total_duration_minutes > 0:
+            # If the employee has no real clock-out (we used expected_dt_out), consider status partial unless leave covers full expected work window
+            if is_partial:
+                # if leave covered the entire expected window, mark on_leave
+                if leave_minutes >= (workday_minutes):
+                    record.status = self.STATUS_ON_LEAVE
+                else:
+                    record.status = self.STATUS_PARTIAL
+            else:
+                record.status = self.STATUS_PRESENT
+        else:
+            record.status = self.STATUS_ABSENT
 
     def _validate_leave_balance(self, employee_id: int, date: datetime.date, new_leave_minutes: int, db: Session, old_record: Attendance = None):
         """Checks if adding a leave record exceeds the employee's monthly allowance."""
