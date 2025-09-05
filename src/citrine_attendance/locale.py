@@ -32,6 +32,7 @@ TRANSLATIONS = {
         "confirm_exit": "Confirm Exit",
         "are_you_sure_quit": "Are you sure you want to quit?",
         "dashboard_welcome": "Welcome, {username}!",
+        "dashboard_title": "dashboard",
         "dashboard_role": "Role: {role}",
         "dashboard_present_today": "Present Today",
         "dashboard_absent_today": "Absent Today",
@@ -46,6 +47,7 @@ TRANSLATIONS = {
         "dashboard_action_recorded": "{action} recorded successfully for {employee} on {date} at {time}.",
         "error": "Error", # HEROIC FIX: Generic error title
         "dashboard_error_message": "Error during {action} for Employee ID {employee_id}: {error}", # HEROIC FIX: Specific key for message
+        "employee_view_title": "employees",
         "employee_add": "Add Employee",
         "employee_edit": "Edit Employee",
         "employee_delete": "Delete Employee",
@@ -182,6 +184,8 @@ TRANSLATIONS = {
         "settings_access_restricted_to_admins": "Access restricted to administrators.",
         "settings_error_loading_users": "Error loading users: {error}",
         "settings_error_loading_audit_log": "Error loading audit log: {error}",
+        "settings_launch_start": "launch start time:",
+        "settings_launch_end": "launch end time:",
         # HEROIC FIX: Added missing error message keys
         "error_loading_filter_data": "Error loading filter data: {error}",
         "error_loading_attendance_data": "Error loading attendance data: {error}",
@@ -372,6 +376,8 @@ TRANSLATIONS = {
         "settings_access_restricted_to_admins": "دسترسی به مدیران محدود شده است.",
         "settings_error_loading_users": "خطا در بارگیری کاربران: {error}",
         "settings_error_loading_audit_log": "خطا در بارگیری گزارش حسابرسی: {error}",
+        "settings_launch_start": "شروع تایم ناهار:",
+        "settings_launch_end": "پایان تایم ناهار:",
         "attendance_launch_start": "شروع ناهار:",
         "attendance_launch_end": "پایان ناهار:",
         "dashboard_title": "پنل داشبورد",
