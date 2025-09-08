@@ -27,6 +27,7 @@ class AttendanceService:
     STATUS_DISPLAY = {"present": "Present", "absent": "Absent", "on_leave": "On Leave"}
 
     def _get_session(self) -> Session:
+        # keep existing style (get_db_session might be a generator/depends on your implementation)
         return next(get_db_session())
 
     def get_monthly_leave_taken(self, employee_id: int, date: datetime.date, db: Session) -> int:
@@ -44,14 +45,12 @@ class AttendanceService:
     def _calculate_all_fields(self, record: Attendance):
         """
         Robust calculation of derived attendance fields with correct leave handling.
-        - Computes leave overlap with an appropriate work window (real attendance window or expected window).
+        - Computes leave overlap with both actual attendance window and expected work window.
+        - When employee actually attended, only the part of leave that overlaps the attendance window
+          reduces the worked minutes (so scheduled later leave doesn't reduce earlier worked time).
         - Normalizes string times (supports Persian/Arabic digits).
-        - Ensures overtime threshold is calculated after workday + launch + counted leave.
+        - Ensures overtime threshold is calculated after workday + launch + counted leave (attendance overlap).
         """
-
-        import datetime
-        import logging
-        logger = logging.getLogger(__name__)
 
         def _norm_digits(s: str) -> str:
             if s is None:
@@ -150,7 +149,7 @@ class AttendanceService:
             end = min(a_end, b_end)
             return int((end - start).total_seconds() / 60) if end > start else 0
 
-        # Helper to normalize leave interval datetimes (handles cross-day by adding day if end <= start)
+        # Helper to normalize interval datetimes (handles cross-day by adding a day if end <= start)
         def _normalize_interval(date_obj: datetime.date, t_start: datetime.time, t_end: datetime.time):
             s_dt = datetime.datetime.combine(date_obj, t_start)
             e_dt = datetime.datetime.combine(date_obj, t_end)
@@ -214,7 +213,6 @@ class AttendanceService:
             bstr = _norm_digits(base_start_str)
             bh, bm = map(int, bstr.split(':'))
             base_dt = datetime.datetime.combine(record.date, datetime.time(bh, bm))
-            # If base time is logically after dt_in because dt_in rolled to next day, keep day aligned
             record.tardiness_minutes = int(max(0, (dt_in - base_dt).total_seconds() / 60))
         except Exception as e:
             logger.warning(f"Failed to parse base start/late threshold '{base_start_str}': {e}")
@@ -244,34 +242,54 @@ class AttendanceService:
         total_duration_minutes = int((dt_out - dt_in).total_seconds() / 60)
         record.duration_minutes = int(total_duration_minutes)
 
-        # --- Leave overlap
-        # Robust logging and strict guards: leave is only counted when it intersects the attendance window [dt_in, dt_out]
-        leave_minutes = 0
+        # --- Leave overlap (IMPROVED)
+        # We'll compute:
+        #  - att_overlap: leave overlapping the actual attendance window [dt_in, dt_out]
+        #  - exp_overlap: leave overlapping the expected work window [base_start_dt, base_start_dt + workday + launch]
+        # Business rule:
+        #  - always record leave as exp_overlap when present (so monthly leave counts scheduled hourly leave)
+        #  - BUT when employee actually attended, only subtract att_overlap from worked minutes/overtime.
+        leave_recorded = 0
+        att_overlap = 0
+        exp_overlap = 0
         if leave_start and leave_end:
             try:
                 ls_dt, le_dt = _normalize_interval(record.date, leave_start, leave_end)
 
-                # DEBUG: log the datetimes used so you can inspect them in logs
                 logger.debug(
                     f"Computing leave overlap for record id={getattr(record,'id',None)} "
                     f"dt_in={dt_in.isoformat()} dt_out={dt_out.isoformat()} "
                     f"leave_start={ls_dt.isoformat()} leave_end={le_dt.isoformat()}"
                 )
 
-                # If the leave interval is completely outside attendance window, leave_minutes stays 0
-                # Overlap function already does that, but we keep explicit check for clarity and to avoid accidental day shifts:
-                if le_dt <= dt_in or ls_dt >= dt_out:
-                    # no overlap
-                    leave_minutes = 0
-                    logger.debug(f"No leave overlap (leave outside attendance window) for record id={getattr(record,'id',None)}")
-                else:
-                    # compute the precise overlap
-                    leave_minutes = _overlap_minutes(dt_in, dt_out, ls_dt, le_dt)
-                    logger.debug(f"Leave overlap minutes computed={leave_minutes} for record id={getattr(record,'id',None)}")
+                # overlap with actual attendance window
+                att_overlap = _overlap_minutes(dt_in, dt_out, ls_dt, le_dt)
+
+                # expected work window (based on base_start_time)
+                try:
+                    bstr = _norm_digits(config.settings.get("base_start_time", config.settings.get("late_threshold_time", "09:00")))
+                    bh, bm = map(int, bstr.split(':'))
+                    base_start_time = datetime.time(bh, bm)
+                except Exception as e:
+                    logger.debug(f"Failed to parse base_start_time for expected window: {e}")
+                    base_start_time = datetime.time(9, 0)
+
+                expected_start_dt = datetime.datetime.combine(record.date, base_start_time)
+                expected_end_dt = expected_start_dt + datetime.timedelta(minutes=(workday_minutes + launch_minutes_full))
+                exp_overlap = _overlap_minutes(expected_start_dt, expected_end_dt, ls_dt, le_dt)
+
+                # recorded leave: prefer expected overlap (so leave counts for monthly totals)
+                leave_recorded = exp_overlap if exp_overlap > 0 else att_overlap
+
+                logger.debug(f"Leave overlaps: att={att_overlap}, exp={exp_overlap}, recorded={leave_recorded} for record id={getattr(record,'id',None)}")
             except Exception as e:
                 logger.warning(f"Error computing leave overlap for record {getattr(record,'id',None)}: {e}")
-                leave_minutes = 0
-        record.leave_duration_minutes = int(leave_minutes)
+                att_overlap = 0
+                exp_overlap = 0
+                leave_recorded = 0
+
+        # Save recorded leave minutes (this is what shows in reports / monthly totals)
+        record.leave_duration_minutes = int(leave_recorded)
 
         # --- Launch (lunch) overlap WITHIN the attendance window
         try:
@@ -282,18 +300,19 @@ class AttendanceService:
             launch_minutes = 0
         record.launch_duration_minutes = int(launch_minutes)
 
-        # net work: total minus counted launch and counted leave (never negative)
-        net_work_minutes = max(0, total_duration_minutes - launch_minutes - leave_minutes)
+        # net work: total minus counted launch and ONLY the attendance-overlapping leave (att_overlap),
+        # because scheduled leave later in the day shouldn't reduce work already done earlier.
+        net_work_minutes = max(0, total_duration_minutes - launch_minutes - int(att_overlap))
 
         # main work (ensures tardiness + main_work == workday when possible)
         desired_main_work = max(0, workday_minutes - int(record.tardiness_minutes or 0))
         main_work_minutes = min(net_work_minutes, desired_main_work)
         record.main_work_minutes = int(main_work_minutes)
 
-        # --- Overtime: starts after workday_minutes + launch_minutes + counted leave_minutes
+        # --- Overtime: starts after workday_minutes + launch_minutes + attendance-overlapping leave (att_overlap)
         overtime_minutes = 0
         try:
-            overtime_threshold_dt = dt_in + datetime.timedelta(minutes=(workday_minutes + launch_minutes + leave_minutes))
+            overtime_threshold_dt = dt_in + datetime.timedelta(minutes=(workday_minutes + launch_minutes + int(att_overlap)))
             if dt_out > overtime_threshold_dt:
                 overtime_minutes = int((dt_out - overtime_threshold_dt).total_seconds() / 60)
             else:
@@ -307,8 +326,8 @@ class AttendanceService:
         if total_duration_minutes > 0:
             # If the employee has no real clock-out (we used expected_dt_out), consider status partial unless leave covers full expected work window
             if is_partial:
-                # if leave covered the entire expected window, mark on_leave
-                if leave_minutes >= (workday_minutes):
+                # if leave recorded covered the entire expected window, mark on_leave
+                if leave_recorded >= (workday_minutes):
                     record.status = self.STATUS_ON_LEAVE
                 else:
                     record.status = self.STATUS_PARTIAL
