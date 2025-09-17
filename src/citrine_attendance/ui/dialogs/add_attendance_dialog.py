@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QDate, QTime, pyqtSignal
 from ...services.employee_service import employee_service
+from ...services.attendance_service import attendance_service, AttendanceAlreadyExistsError, LeaveBalanceExceededError
+from ...services.audit_service import audit_service
 from ...database import get_db_session, Attendance
 from ..widgets.custom_time_edit import CustomTimeEdit
 from ..widgets.jalali_date_edit import JalaliDateEdit
@@ -15,17 +17,24 @@ import jdatetime
 
 class AttendanceDialogBase(QDialog):
     """Base dialog for adding or editing an attendance record."""
-    def __init__(self, parent=None, record=None):
+    def __init__(self, parent=None, record=None, employee_id=None, default_date=None):
         super().__init__(parent)
         self.logger = logging.getLogger(__name__)
         self.record = record
+        self.employee_id = employee_id if employee_id is not None else (record.employee_id if record else None)
+        self.default_date = default_date if default_date is not None else (record.date if record else date.today())
+        self.current_user = parent.current_user if hasattr(parent, 'current_user') else None
         self.db_session = None
         self.employees = []
+
         self.init_ui()
         self.load_employees()
         self.update_jalali_label()
+
         if self.record:
             self.populate_data()
+        else:
+            self.set_defaults()
 
     def init_ui(self):
         if QApplication.instance().layoutDirection() == Qt.LayoutDirection.RightToLeft:
@@ -37,6 +46,7 @@ class AttendanceDialogBase(QDialog):
         layout.setSpacing(15)
 
         title_key = "attendance_edit_dialog_title" if self.record else "attendance_add_dialog_title"
+        self.setWindowTitle(_(title_key))
         title_label = QLabel(_(title_key))
         title_label.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(title_label)
@@ -46,11 +56,13 @@ class AttendanceDialogBase(QDialog):
         
         self.employee_combo = QComboBox()
         self.employee_combo.setMinimumWidth(250)
+        # HEROIC CHANGE: Disable employee combo in edit mode
+        if isinstance(self, EditAttendanceDialog):
+            self.employee_combo.setEnabled(False)
         form_layout.addRow(_("attendance_add_dialog_employee"), self.employee_combo)
         
         date_layout = QHBoxLayout()
         self.date_edit = JalaliDateEdit()
-        self.date_edit.setDate(QDate.currentDate())
         self.date_edit.dateChanged.connect(self.update_jalali_label)
         self.jalali_label = QLabel()
         date_layout.addWidget(self.date_edit)
@@ -64,7 +76,6 @@ class AttendanceDialogBase(QDialog):
         self.time_out_edit = CustomTimeEdit()
         form_layout.addRow(_("attendance_add_dialog_time_out"), self.time_out_edit)
 
-        # --- Leave Time Fields ---
         self.leave_start_edit = CustomTimeEdit()
         form_layout.addRow(_("hourly_leave_start"), self.leave_start_edit)
 
@@ -102,6 +113,13 @@ class AttendanceDialogBase(QDialog):
         finally:
             if self.db_session: self.db_session.close()
 
+    def set_defaults(self):
+        """Set default values for a new record."""
+        if self.employee_id:
+            index = self.employee_combo.findData(self.employee_id)
+            if index != -1: self.employee_combo.setCurrentIndex(index)
+        self.date_edit.setDate(QDate(self.default_date.year, self.default_date.month, self.default_date.day))
+
     def populate_data(self):
         """Fill the dialog with existing record data for editing."""
         if not self.record: return
@@ -138,7 +156,8 @@ class AttendanceDialogBase(QDialog):
             'time_out': qtime_to_pytime(self.time_out_edit),
             'leave_start': qtime_to_pytime(self.leave_start_edit),
             'leave_end': qtime_to_pytime(self.leave_end_edit),
-            'note': self.note_edit.toPlainText().strip() or None
+            'note': self.note_edit.toPlainText().strip() or None,
+            'created_by': self.current_user.username if self.current_user else 'system'
         }
     
     def handle_action(self):
@@ -149,18 +168,23 @@ class AddAttendanceDialog(AttendanceDialogBase):
     """Dialog for adding a new attendance record."""
     record_added = pyqtSignal()
     
-    def __init__(self, parent=None):
-        super().__init__(parent, record=None)
-        self.setWindowTitle(_("attendance_add_dialog_title"))
+    def __init__(self, parent=None, employee_id=None, default_date=None):
+        super().__init__(parent, record=None, employee_id=employee_id, default_date=default_date)
 
     def handle_action(self):
         record_data = self.get_record_data()
         if record_data:
-            self.record_added.emit()
-            self.accept()
-    
-    def get_new_record_data(self):
-        return self.get_record_data()
+            try:
+                new_record = attendance_service.add_manual_attendance(**record_data)
+                if self.current_user:
+                    audit_service.log_action("attendance", new_record.id, "create", {k: str(v) for k, v in record_data.items()}, self.current_user.username)
+                self.record_added.emit()
+                self.accept()
+            except (AttendanceAlreadyExistsError, LeaveBalanceExceededError) as e:
+                 QMessageBox.warning(self, _("error"), str(e))
+            except Exception as e:
+                 self.logger.error(f"Error adding record: {e}", exc_info=True)
+                 QMessageBox.critical(self, _("dashboard_error"), _("error_adding_record", error=e))
 
 
 class EditAttendanceDialog(AttendanceDialogBase):
@@ -168,8 +192,7 @@ class EditAttendanceDialog(AttendanceDialogBase):
     record_updated = pyqtSignal(int, dict)
     
     def __init__(self, record: Attendance, parent=None):
-        super().__init__(parent, record)
-        self.setWindowTitle(_("attendance_edit_dialog_title"))
+        super().__init__(parent, record=record)
 
     def handle_action(self):
         record_data = self.get_record_data()

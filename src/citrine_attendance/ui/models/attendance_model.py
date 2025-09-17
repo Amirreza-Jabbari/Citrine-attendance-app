@@ -5,8 +5,9 @@ from typing import List, Optional
 from PyQt6.QtCore import QAbstractTableModel, Qt, QModelIndex, QVariant
 from PyQt6.QtGui import QColor
 
-from ...services.attendance_service import attendance_service, AttendanceServiceError
-from ...database import Attendance
+from ...services.attendance_service import attendance_service
+from ...services.employee_service import employee_service
+from ...database import Attendance, get_db_session
 from ...date_utils import format_date_for_display, get_jalali_month_range
 from ...utils.time_utils import minutes_to_hhmm
 from ...locale import _
@@ -19,7 +20,6 @@ class AttendanceTableModel(QAbstractTableModel):
     TIME_IN_COL = 2
     TIME_OUT_COL = 3
     LEAVE_COL = 4
-    # HEROIC FIX: Added new columns for monthly leave tracking
     USED_LEAVE_MONTH_COL = 5
     REMAINING_LEAVE_MONTH_COL = 6
     TARDINESS_COL = 7
@@ -36,61 +36,51 @@ class AttendanceTableModel(QAbstractTableModel):
         self.config = config
         self.attendance_data: List[Attendance] = []
         self.employee_cache = {}
-        self.monthly_leave_cache = {} # Cache for monthly leave data
+        self.monthly_leave_cache = {}
         self.filters = {}
         self.COLUMN_HEADERS = [
-            _("attendance_header_employee"),
-            _("attendance_header_date"),
-            _("attendance_header_time_in"),
-            _("attendance_header_time_out"),
-            _("attendance_header_leave"),
-            _("attendance_header_used_leave"), # Use translation key
-            _("attendance_header_remaining_leave"), # Use translation key
-            _("attendance_header_tardiness"),
-            _("attendance_header_main_work"),
-            _("attendance_header_overtime"),
-            _("attendance_header_launch"),
-            _("attendance_header_total_duration"),
-            _("attendance_header_status"),
-            _("attendance_header_notes")
+            _("attendance_header_employee"), _("attendance_header_date"),
+            _("attendance_header_time_in"), _("attendance_header_time_out"),
+            _("attendance_header_leave"), _("attendance_header_used_leave"),
+            _("attendance_header_remaining_leave"), _("attendance_header_tardiness"),
+            _("attendance_header_main_work"), _("attendance_header_overtime"),
+            _("attendance_header_launch"), _("attendance_header_total_duration"),
+            _("attendance_header_status"), _("attendance_header_notes")
         ]
         self.COLUMN_COUNT = len(self.COLUMN_HEADERS)
         self.STATUS_DISPLAY = {
             attendance_service.STATUS_PRESENT: _("attendance_filter_present"),
             attendance_service.STATUS_ABSENT: _("attendance_filter_absent"),
             attendance_service.STATUS_ON_LEAVE: _("attendance_status_on_leave"),
+            attendance_service.STATUS_PARTIAL: _("attendance_status_partial"),
         }
 
     def load_data(self):
-        """Load attendance data and pre-calculate monthly leave."""
+        """Load attendance data and pre-calculate caches for display."""
+        db_session = next(get_db_session())
         try:
-            # Clear caches
             self.employee_cache.clear()
             self.monthly_leave_cache.clear()
             
-            records = attendance_service.get_attendance_records(**self.filters)
+            records = attendance_service.get_attendance_records(db=db_session, **self.filters)
 
-            # Populate employee cache
+            # Populate cache with ALL employees to handle placeholders correctly
+            all_employees = employee_service.get_all_employees(db=db_session)
             self.employee_cache = {
-                r.employee_id: {
-                    "name": f"{r.employee.first_name} {r.employee.last_name}".strip() or r.employee.email,
-                    "allowance": r.employee.monthly_leave_allowance_minutes
-                }
-                for r in records if r.employee
+                emp.id: {
+                    "name": f"{emp.first_name} {emp.last_name}".strip() or emp.email,
+                    "allowance": emp.monthly_leave_allowance_minutes or 0
+                } for emp in all_employees
             }
 
-            # HEROIC FIX: Pre-calculate monthly leave totals using the correct Jalali month range
-            db_session = attendance_service._get_session()
-            try:
-                for record in records:
-                    start_of_period, _ = get_jalali_month_range(record.date)
-                    cache_key = (record.employee_id, start_of_period)
-                    
-                    if cache_key not in self.monthly_leave_cache:
-                        used_leave = attendance_service.get_monthly_leave_taken(record.employee_id, record.date, db_session)
-                        self.monthly_leave_cache[cache_key] = used_leave
-            finally:
-                db_session.close()
+            # Pre-calculate monthly leave totals for efficiency
+            unique_emp_dates = {(r.employee_id, r.date) for r in records if r.id}
+            for emp_id, date_val in unique_emp_dates:
+                start_of_period, _ = get_jalali_month_range(date_val)
+                cache_key = (emp_id, start_of_period)
+                if cache_key not in self.monthly_leave_cache:
+                    used_leave = attendance_service.get_monthly_leave_taken(emp_id, date_val, db_session)
+                    self.monthly_leave_cache[cache_key] = used_leave
 
             search_text = self.filters.get('search_text', '').lower()
             if search_text:
@@ -110,6 +100,8 @@ class AttendanceTableModel(QAbstractTableModel):
             self.beginResetModel()
             self.attendance_data = []
             self.endResetModel()
+        finally:
+            db_session.close()
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.attendance_data)
@@ -118,7 +110,7 @@ class AttendanceTableModel(QAbstractTableModel):
         return self.COLUMN_COUNT
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid() or index.row() >= len(self.attendance_data):
+        if not index.isValid() or not (0 <= index.row() < len(self.attendance_data)):
             return QVariant()
 
         record = self.attendance_data[index.row()]
@@ -128,26 +120,27 @@ class AttendanceTableModel(QAbstractTableModel):
             if col == self.EMPLOYEE_NAME_COL:
                 return self.employee_cache.get(record.employee_id, {}).get("name", f"ID:{record.employee_id}")
             elif col == self.DATE_COL:
-                return format_date_for_display(record.date, self.config.settings.get("date_format", "both"))
+                return format_date_for_display(record.date, format_preference=self.config.settings.get("date_format", "both"))
             elif col == self.TIME_IN_COL:
                 return record.time_in.strftime("%H:%M") if record.time_in else ""
             elif col == self.TIME_OUT_COL:
                 return record.time_out.strftime("%H:%M") if record.time_out else ""
             elif col == self.LEAVE_COL:
                 return minutes_to_hhmm(record.leave_duration_minutes)
-            # HEROIC FIX: Display calculated monthly leave data from the corrected cache
             elif col == self.USED_LEAVE_MONTH_COL:
+                if not record.id: return ""
                 start_of_period, _ = get_jalali_month_range(record.date)
                 used_leave = self.monthly_leave_cache.get((record.employee_id, start_of_period), 0)
                 return minutes_to_hhmm(used_leave)
             elif col == self.REMAINING_LEAVE_MONTH_COL:
+                if not record.id: return ""
                 allowance = self.employee_cache.get(record.employee_id, {}).get("allowance", 0)
                 if allowance > 0:
                     start_of_period, _ = get_jalali_month_range(record.date)
                     used_leave = self.monthly_leave_cache.get((record.employee_id, start_of_period), 0)
                     remaining = max(0, allowance - used_leave)
                     return minutes_to_hhmm(remaining)
-                return "N/A" # Not applicable if no allowance is set
+                return "N/A"
             elif col == self.TARDINESS_COL:
                 return minutes_to_hhmm(record.tardiness_minutes)
             elif col == self.MAIN_WORK_COL:
@@ -173,10 +166,14 @@ class AttendanceTableModel(QAbstractTableModel):
                 return Qt.AlignmentFlag.AlignCenter
         
         elif role == Qt.ItemDataRole.BackgroundRole:
-            if record.status == 'absent':
-                return QColor("#641E16")
+            if not record.id and record.status == 'absent':
+                 return QColor("#F4F6F7")
+            if record.id and record.status == 'absent':
+                return QColor("#FADBD8")
             if record.status == 'on_leave':
-                return QColor("#7E5109")
+                return QColor("#FAE5D3")
+            if record.status == 'partial':
+                return QColor("#D6EAF8")
 
         return QVariant()
 
@@ -191,13 +188,16 @@ class AttendanceTableModel(QAbstractTableModel):
         return None
 
     def refresh(self):
+        """Reloads all data from the service based on current filters."""
         self.load_data()
 
     def set_filters(self, **kwargs):
+        """Sets new filters and triggers a data refresh."""
         self.filters = kwargs
         self.refresh()
 
     def add_attendance_record(self, record_data: dict):
+        """Proxy to add a record via the service and then refresh."""
         try:
             attendance_service.add_manual_attendance(**record_data)
             self.refresh()
@@ -206,6 +206,7 @@ class AttendanceTableModel(QAbstractTableModel):
             raise
 
     def update_attendance_record(self, record_id: int, record_data: dict):
+        """Proxy to update a record via the service and then refresh."""
         try:
             attendance_service.update_attendance(attendance_id=record_id, **record_data)
             self.refresh()

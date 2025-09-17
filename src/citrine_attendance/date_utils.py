@@ -1,6 +1,6 @@
 import jdatetime
 import datetime
-from typing import Union, Tuple
+from typing import Union, Tuple, List
 
 # --- Date Conversion Utilities ---
 def gregorian_to_jalali(greg_date: Union[datetime.date, datetime.datetime]) -> jdatetime.date:
@@ -77,6 +77,13 @@ def format_date_for_display(gregorian_date: Union[datetime.date, datetime.dateti
         jalali_part = format_jalali_date(jalali_date_obj, include_time=isinstance(gregorian_date, datetime.datetime), gregorian_dt=greg_dt_obj)
         iso_part = format_gregorian_date_iso(gregorian_date)
         return f"{jalali_part} — {iso_part}"
+
+def get_jalali_month_names() -> List[str]:
+    """Returns a list of Jalali month names."""
+    return [
+        "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+        "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"
+    ]
 
 # HEROIC FIX: New function to get Jalali month range starting from day 29
 def get_jalali_month_range(gregorian_date: datetime.date) -> Tuple[datetime.date, datetime.date]:

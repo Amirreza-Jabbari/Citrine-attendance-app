@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QLineEdit, QTableView, QAbstractItemView,
     QMessageBox, QApplication, QStyle, QCheckBox, QFrame,
-    QMenu, QInputDialog
+    QMenu
 )
 from PyQt6.QtCore import Qt, QDate, QModelIndex
 from PyQt6.QtGui import QKeySequence, QShortcut
@@ -26,6 +26,7 @@ from ...services.attendance_service import attendance_service, LeaveBalanceExcee
 from ...services.audit_service import audit_service
 from ...locale import _
 from ...utils.time_utils import minutes_to_hhmm
+from ...date_utils import get_jalali_month_names, jalali_to_gregorian
 import jdatetime
 
 
@@ -40,6 +41,7 @@ class AttendanceView(QWidget):
         self.db_session: Optional[Session] = None
 
         self.init_ui()
+        self.populate_month_filter()
         self.load_filter_data()
         self.load_attendance_data()
         self.setup_context_menu()
@@ -60,7 +62,7 @@ class AttendanceView(QWidget):
         self.attendance_table.setSortingEnabled(False)
         self.attendance_table.setModel(self.attendance_model)
         self.attendance_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.attendance_table.doubleClicked.connect(self.open_edit_record_dialog)
+        self.attendance_table.doubleClicked.connect(self.open_edit_or_add_dialog)
         self.attendance_table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.attendance_table)
 
@@ -76,49 +78,48 @@ class AttendanceView(QWidget):
         filter_layout = QHBoxLayout(self.filter_bar)
         filter_layout.setSpacing(15)
 
-        filter_layout.addWidget(QLabel(_("attendance_filter_employee")))
+        # --- Create widgets ---
         self.employee_filter_combo = QComboBox()
         self.employee_filter_combo.setMinimumWidth(150)
-        filter_layout.addWidget(self.employee_filter_combo)
 
-        filter_layout.addWidget(QLabel(_("attendance_filter_start")))
+        self.month_filter_combo = QComboBox()
+        self.month_filter_combo.setMinimumWidth(120)
+
         self.start_date_edit = JalaliDateEdit()
-        self.start_date_edit.setDate(QDate.currentDate().addDays(-30))
-        filter_layout.addWidget(self.start_date_edit)
-
-        filter_layout.addWidget(QLabel(_("attendance_filter_end")))
         self.end_date_edit = JalaliDateEdit()
-        self.end_date_edit.setDate(QDate.currentDate())
-        filter_layout.addWidget(self.end_date_edit)
 
+        self.status_present_cb = QCheckBox(_("attendance_filter_present"), checked=True)
+        self.status_absent_cb = QCheckBox(_("attendance_filter_absent"), checked=True)
+        self.status_on_leave_cb = QCheckBox(_("attendance_status_on_leave"), checked=True)
+
+        self.search_filter_edit = QLineEdit(placeholderText=_("attendance_filter_search_placeholder"))
+        self.add_record_btn = QPushButton(_("attendance_add_record"))
+        self.export_btn = QPushButton(_("attendance_export"))
+        self.refresh_button = QPushButton(_("attendance_filter_refresh"))
+        self.refresh_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+
+        # --- Add widgets to layout ---
+        filter_layout.addWidget(QLabel(_("attendance_filter_employee")))
+        filter_layout.addWidget(self.employee_filter_combo)
+        filter_layout.addWidget(QLabel(_("attendance_filter_month")))
+        filter_layout.addWidget(self.month_filter_combo)
+        filter_layout.addWidget(QLabel(_("attendance_filter_start")))
+        filter_layout.addWidget(self.start_date_edit)
+        filter_layout.addWidget(QLabel(_("attendance_filter_end")))
+        filter_layout.addWidget(self.end_date_edit)
         filter_layout.addWidget(QLabel(_("attendance_filter_status")))
-        self.status_present_cb = QCheckBox(_("attendance_filter_present"))
-        self.status_present_cb.setChecked(True)
-        self.status_absent_cb = QCheckBox(_("attendance_filter_absent"))
-        self.status_absent_cb.setChecked(True)
-        self.status_on_leave_cb = QCheckBox(_("attendance_status_on_leave"))
-        self.status_on_leave_cb.setChecked(True)
         filter_layout.addWidget(self.status_present_cb)
         filter_layout.addWidget(self.status_absent_cb)
         filter_layout.addWidget(self.status_on_leave_cb)
-
-        self.search_filter_edit = QLineEdit(placeholderText=_("attendance_filter_search_placeholder"))
         filter_layout.addWidget(self.search_filter_edit)
         filter_layout.addStretch()
-
-        self.add_record_btn = QPushButton(_("attendance_add_record"))
-        self.add_record_btn.clicked.connect(self.open_add_record_dialog)
         filter_layout.addWidget(self.add_record_btn)
-
-        self.export_btn = QPushButton(_("attendance_export"))
-        self.export_btn.clicked.connect(self.open_export_dialog)
         filter_layout.addWidget(self.export_btn)
-
-        self.refresh_button = QPushButton(_("attendance_filter_refresh"))
-        self.refresh_button.setIcon(QApplication.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         filter_layout.addWidget(self.refresh_button)
 
+        # --- Connect signals ---
         self.employee_filter_combo.currentIndexChanged.connect(self.load_attendance_data)
+        self.month_filter_combo.currentIndexChanged.connect(self.on_month_selected)
         self.start_date_edit.dateChanged.connect(self.load_attendance_data)
         self.end_date_edit.dateChanged.connect(self.load_attendance_data)
         self.status_present_cb.stateChanged.connect(self.load_attendance_data)
@@ -126,14 +127,60 @@ class AttendanceView(QWidget):
         self.status_on_leave_cb.stateChanged.connect(self.load_attendance_data)
         self.search_filter_edit.textChanged.connect(self.load_attendance_data)
         self.refresh_button.clicked.connect(self.load_attendance_data)
+        self.add_record_btn.clicked.connect(self.open_add_record_dialog)
+        self.export_btn.clicked.connect(self.open_export_dialog)
+
+    def populate_month_filter(self):
+        """Populate the month filter dropdown with Jalali months."""
+        self.month_filter_combo.blockSignals(True)
+        self.month_filter_combo.clear()
+        self.month_filter_combo.addItem(_("select_month"), -1)
+        
+        month_names = get_jalali_month_names()
+        for i, month_name in enumerate(month_names):
+            self.month_filter_combo.addItem(month_name, i + 1)
+        
+        today = jdatetime.date.today()
+        self.month_filter_combo.setCurrentIndex(today.month)
+        self.month_filter_combo.blockSignals(False)
+        self.set_date_range_for_month(self.month_filter_combo.currentIndex())
+
+    def on_month_selected(self, index):
+        """Handle month selection from the dropdown."""
+        self.set_date_range_for_month(index)
+
+    def set_date_range_for_month(self, index):
+        """Sets the start and end date edits based on the selected month index."""
+        month = self.month_filter_combo.itemData(index)
+        if month == -1: return
+            
+        today = jdatetime.date.today()
+        year = today.year
+
+        if month > today.month:
+            year -= 1
+
+        try:
+            start_date_jalali = jdatetime.date(year, month, 1)
+            days_in_month = jdatetime.j_days_in_month[month - 1]
+            if month == 12 and not start_date_jalali.isleap():
+                days_in_month = 29
+            end_date_jalali = jdatetime.date(year, month, days_in_month)
+
+            start_date_gregorian = jalali_to_gregorian(start_date_jalali)
+            end_date_gregorian = jalali_to_gregorian(end_date_jalali)
+            
+            self.start_date_edit.setDate(QDate(start_date_gregorian))
+            self.end_date_edit.setDate(QDate(end_date_gregorian))
+        except ValueError as e:
+            self.logger.error(f"Error calculating date range for month {month}: {e}")
 
     def load_filter_data(self):
         """Load data for filter controls (e.g., employee list)."""
+        db = next(get_db_session())
         try:
-            session_gen = get_db_session()
-            self.db_session = next(session_gen)
             current_emp_id = self.employee_filter_combo.currentData()
-            employees = employee_service.get_all_employees(db=self.db_session)
+            employees = employee_service.get_all_employees(db=db)
 
             self.employee_filter_combo.blockSignals(True)
             self.employee_filter_combo.clear()
@@ -146,13 +193,11 @@ class AttendanceView(QWidget):
             if index != -1:
                 self.employee_filter_combo.setCurrentIndex(index)
             self.employee_filter_combo.blockSignals(False)
-
         except Exception as e:
             self.logger.error(f"Error loading filter data: {e}", exc_info=True)
             QMessageBox.critical(self, _("dashboard_error"), _("error_loading_filter_data", error=e))
         finally:
-            if self.db_session:
-                self.db_session.close()
+            db.close()
 
     def load_attendance_data(self):
         """Load attendance data based on current filter settings."""
@@ -182,16 +227,22 @@ class AttendanceView(QWidget):
         menu = QMenu()
         index = self.attendance_table.indexAt(position)
         if not index.isValid(): return
+        
+        record = self.get_selected_record()
+        if not record: return
 
-        edit_action = menu.addAction(_("edit"))
-        delete_action = menu.addAction(_("delete"))
-        duplicate_action = menu.addAction(_("duplicate"))
-
-        action = menu.exec(self.attendance_table.viewport().mapToGlobal(position))
-
-        if action == edit_action: self.open_edit_record_dialog(index)
-        elif action == delete_action: self.delete_selected_record()
-        elif action == duplicate_action: self.duplicate_selected_record()
+        if record.id: # Existing record
+            edit_action = menu.addAction(_("edit"))
+            delete_action = menu.addAction(_("delete"))
+            duplicate_action = menu.addAction(_("duplicate"))
+            action = menu.exec(self.attendance_table.viewport().mapToGlobal(position))
+            if action == edit_action: self.open_edit_or_add_dialog(index)
+            elif action == delete_action: self.delete_selected_record()
+            elif action == duplicate_action: self.duplicate_selected_record()
+        else: # Placeholder record
+            add_action = menu.addAction(_("attendance_add_record"))
+            action = menu.exec(self.attendance_table.viewport().mapToGlobal(position))
+            if action == add_action: self.open_edit_or_add_dialog(index)
 
     def get_selected_record(self) -> Optional[Attendance]:
         """Helper to get the Attendance object from the current selection."""
@@ -201,9 +252,9 @@ class AttendanceView(QWidget):
 
     def delete_selected_record(self):
         record = self.get_selected_record()
-        if not record: return
+        if not record or not record.id: return
 
-        emp_name = self.attendance_model.employee_cache.get(record.employee_id, 'Unknown')
+        emp_name = self.attendance_model.employee_cache.get(record.employee_id, {}).get("name", "Unknown")
         reply = QMessageBox.question(
             self,
             _("confirm_delete_title"),
@@ -219,12 +270,14 @@ class AttendanceView(QWidget):
 
     def duplicate_selected_record(self):
         record = self.get_selected_record()
-        if not record: return
+        if not record or not record.id: return
 
         try:
+            next_day = record.date + timedelta(days=1)
+            
             new_record = attendance_service.add_manual_attendance(
                 employee_id=record.employee_id,
-                date=record.date + timedelta(days=1),
+                date=next_day,
                 time_in=record.time_in,
                 time_out=record.time_out,
                 leave_start=record.leave_start,
@@ -234,37 +287,42 @@ class AttendanceView(QWidget):
             )
             audit_service.log_action("attendance", new_record.id, "create", {"duplicated_from": record.id}, self.current_user.username)
             self.load_attendance_data()
+            QMessageBox.information(self, _("success"), _("record_duplicated_success", date=next_day))
+
+        except LeaveBalanceExceededError as e:
+             QMessageBox.warning(self, _("error"), f"{e}")
         except Exception as e:
             QMessageBox.critical(self, _("dashboard_error"), _("error_duplicating_record", error=e))
 
     def open_add_record_dialog(self):
-        dialog = AddAttendanceDialog(self)
+        employee_id = self.employee_filter_combo.currentData()
+        if not employee_id:
+            QMessageBox.warning(self, _("employee_validation_error"), _("dashboard_please_select_employee"))
+            return
+
+        dialog = AddAttendanceDialog(self, employee_id=employee_id, default_date=date.today())
         dialog.record_added.connect(self.handle_record_added)
         dialog.exec()
 
     def handle_record_added(self):
-        dialog = self.sender()
-        if not dialog: return
-        try:
-            new_data = dialog.get_new_record_data()
-            if new_data:
-                self.attendance_model.add_attendance_record(new_data)
-                QMessageBox.information(self, _("success"), _("record_added_success"))
-                audit_service.log_action("attendance", 0, "create", {k: str(v) for k, v in new_data.items()}, self.current_user.username)
-        # HEROIC FIX: Handle leave balance exceeded error
-        except LeaveBalanceExceededError as e:
-            self.logger.warning(f"Add record failed: {e}")
-            QMessageBox.warning(dialog, _("error"), f"Failed to add record: {e}")
-        except Exception as e:
-            self.logger.error(f"Add record failed: {e}", exc_info=True)
-            QMessageBox.critical(dialog, _("dashboard_error"), _("error_adding_record", error=e))
+        self.load_attendance_data()
+        QMessageBox.information(self, _("success"), _("record_added_success"))
 
-    def open_edit_record_dialog(self, index: QModelIndex):
-        """Opens the edit dialog for the double-clicked or context-menu-selected record."""
+    def open_edit_or_add_dialog(self, index: QModelIndex):
+        """
+        Opens the edit dialog for existing records or the add dialog for placeholder records.
+        """
         record = self.attendance_model.get_attendance_at_row(index.row())
-        if record:
+        if not record:
+            return
+
+        if record.id: # It's an existing record, open Edit dialog
             dialog = EditAttendanceDialog(record, self)
             dialog.record_updated.connect(self.handle_record_updated)
+            dialog.exec()
+        else: # It's a placeholder, open Add dialog
+            dialog = AddAttendanceDialog(self, employee_id=record.employee_id, default_date=record.date)
+            dialog.record_added.connect(self.handle_record_added)
             dialog.exec()
 
     def handle_record_updated(self, record_id: int, record_data: dict):
@@ -272,10 +330,10 @@ class AttendanceView(QWidget):
         dialog = self.sender()
         if not dialog: return
         try:
-            self.attendance_model.update_attendance_record(record_id, record_data)
+            attendance_service.update_attendance(attendance_id=record_id, **record_data)
+            self.load_attendance_data()
             QMessageBox.information(self, _("success"), _("record_updated_success"))
             audit_service.log_action("attendance", record_id, "update", {k: str(v) for k, v in record_data.items()}, self.current_user.username)
-        # HEROIC FIX: Handle leave balance exceeded error
         except LeaveBalanceExceededError as e:
             self.logger.warning(f"Update record failed: {e}")
             QMessageBox.warning(dialog, _("error"), f"Failed to update record: {e}")
@@ -308,7 +366,6 @@ class AttendanceView(QWidget):
             export_service.export_data(options['format'], dict_data, path, title=_("attendance_report_title"))
             QMessageBox.information(self, _("export_successful_title"), _("export_successful_message", path=path))
             audit_service.log_action("export", 0, "create", {"path": str(path), "format": options['format']}, self.current_user.username)
-
         except Exception as e:
             self.logger.error(f"Export failed: {e}", exc_info=True)
             QMessageBox.critical(self, _("export_error_title"), _("export_error_message", error=e))
