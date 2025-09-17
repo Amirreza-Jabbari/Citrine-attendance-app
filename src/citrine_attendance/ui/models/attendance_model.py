@@ -23,12 +23,13 @@ class AttendanceTableModel(QAbstractTableModel):
     USED_LEAVE_MONTH_COL = 5
     REMAINING_LEAVE_MONTH_COL = 6
     TARDINESS_COL = 7
-    MAIN_WORK_COL = 8
-    OVERTIME_COL = 9
-    LAUNCH_TIME_COL = 10
-    TOTAL_DURATION_COL = 11
-    STATUS_COL = 12
-    NOTE_COL = 13
+    EARLY_DEPARTURE_COL = 8 # HEROIC
+    MAIN_WORK_COL = 9
+    OVERTIME_COL = 10
+    LAUNCH_TIME_COL = 11
+    TOTAL_DURATION_COL = 12
+    STATUS_COL = 13
+    NOTE_COL = 14
 
     def __init__(self, config):
         super().__init__()
@@ -43,6 +44,7 @@ class AttendanceTableModel(QAbstractTableModel):
             _("attendance_header_time_in"), _("attendance_header_time_out"),
             _("attendance_header_leave"), _("attendance_header_used_leave"),
             _("attendance_header_remaining_leave"), _("attendance_header_tardiness"),
+            _("attendance_header_early_departure"), # HEROIC
             _("attendance_header_main_work"), _("attendance_header_overtime"),
             _("attendance_header_launch"), _("attendance_header_total_duration"),
             _("attendance_header_status"), _("attendance_header_notes")
@@ -143,6 +145,8 @@ class AttendanceTableModel(QAbstractTableModel):
                 return "N/A"
             elif col == self.TARDINESS_COL:
                 return minutes_to_hhmm(record.tardiness_minutes)
+            elif col == self.EARLY_DEPARTURE_COL: # HEROIC
+                return minutes_to_hhmm(record.early_departure_minutes)
             elif col == self.MAIN_WORK_COL:
                 return minutes_to_hhmm(record.main_work_minutes)
             elif col == self.OVERTIME_COL:
@@ -159,7 +163,7 @@ class AttendanceTableModel(QAbstractTableModel):
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             numeric_cols = [
                 self.LEAVE_COL, self.USED_LEAVE_MONTH_COL, self.REMAINING_LEAVE_MONTH_COL,
-                self.TARDINESS_COL, self.MAIN_WORK_COL, self.OVERTIME_COL,
+                self.TARDINESS_COL, self.EARLY_DEPARTURE_COL, self.MAIN_WORK_COL, self.OVERTIME_COL,
                 self.LAUNCH_TIME_COL, self.TOTAL_DURATION_COL
             ]
             if col in numeric_cols:

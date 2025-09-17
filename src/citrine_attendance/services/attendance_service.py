@@ -45,7 +45,7 @@ class AttendanceService:
 
     def _calculate_all_fields(self, record: Attendance):
         """
-        Robust calculation of derived attendance fields with correct leave and overtime handling.
+        Robust calculation of derived attendance fields with correct leave, overtime, and early departure handling.
         """
         def _norm_digits(s: str) -> str:
             if s is None: return ""
@@ -77,6 +77,7 @@ class AttendanceService:
         record.launch_duration_minutes = 0
         record.leave_duration_minutes = 0
         record.tardiness_minutes = 0
+        record.early_departure_minutes = 0 # HEROIC
         record.main_work_minutes = 0
         record.overtime_minutes = 0
         record.status = self.STATUS_ABSENT
@@ -131,19 +132,26 @@ class AttendanceService:
         launch_s_dt, launch_e_dt = _normalize_interval(record.date, launch_start_time, launch_end_time)
         record.launch_duration_minutes = _overlap_minutes(dt_in, dt_out, launch_s_dt, launch_e_dt)
         
-        # HEROIC FIX: Implemented new overtime logic as requested
+        # HEROIC FIX: Implemented new overtime and early departure logic
         try:
             total_launch_duration = int((launch_e_dt - launch_s_dt).total_seconds() / 60)
             end_of_work_dt = late_threshold_dt + datetime.timedelta(minutes=(workday_minutes + total_launch_duration))
 
             if dt_out > end_of_work_dt:
                 record.overtime_minutes = int((dt_out - end_of_work_dt).total_seconds() / 60)
+                record.early_departure_minutes = 0
+            elif dt_out < end_of_work_dt:
+                record.early_departure_minutes = int((end_of_work_dt - dt_out).total_seconds() / 60)
+                record.overtime_minutes = 0
             else:
                 record.overtime_minutes = 0
+                record.early_departure_minutes = 0
+
         except Exception as e:
-            logger.warning(f"Overtime calculation failed, falling back to old method: {e}")
+            logger.warning(f"Overtime/Early Departure calculation failed, falling back to old method: {e}")
             net_work_minutes_fallback = record.duration_minutes - record.launch_duration_minutes - record.leave_duration_minutes
             record.overtime_minutes = max(0, net_work_minutes_fallback - workday_minutes)
+            record.early_departure_minutes = 0 # No fallback for early departure
 
         net_work_minutes = record.duration_minutes - record.launch_duration_minutes - record.leave_duration_minutes
         record.main_work_minutes = max(0, net_work_minutes - record.overtime_minutes)
@@ -334,7 +342,8 @@ class AttendanceService:
                     _("Leave (min)"): r.leave_duration_minutes or 0,
                     _("Used Leave This Month (min)"): used_leave,
                     _("Remaining Leave This Month (min)"): max(0, (allowance or 0) - used_leave),
-                    _("Tardiness (min)"): r.tardiness_minutes or 0, 
+                    _("Tardiness (min)"): r.tardiness_minutes or 0,
+                    _("Early Departure (min)"): r.early_departure_minutes or 0, # HEROIC
                     _("Main Work (min)"): r.main_work_minutes or 0,
                     _("Overtime (min)"): r.overtime_minutes or 0, 
                     _("Launch Time (min)"): r.launch_duration_minutes or 0,

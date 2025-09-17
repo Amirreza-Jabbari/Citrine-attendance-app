@@ -43,6 +43,8 @@ class Attendance(Base):
     launch_duration_minutes = Column(Integer, nullable=True)
     leave_duration_minutes = Column(Integer, nullable=True) # New column for leave duration
     tardiness_minutes = Column(Integer, nullable=True)
+    # HEROIC FIX: Added early_departure_minutes for "Ta'jil"
+    early_departure_minutes = Column(Integer, nullable=True)
     main_work_minutes = Column(Integer, nullable=True)
     overtime_minutes = Column(Integer, nullable=True)
     status = Column(String, nullable=False)
@@ -123,7 +125,9 @@ def init_db():
                     "launch_duration_minutes": "ALTER TABLE attendance ADD COLUMN launch_duration_minutes INTEGER",
                     "tardiness_minutes": "ALTER TABLE attendance ADD COLUMN tardiness_minutes INTEGER",
                     "main_work_minutes": "ALTER TABLE attendance ADD COLUMN main_work_minutes INTEGER",
-                    "overtime_minutes": "ALTER TABLE attendance ADD COLUMN overtime_minutes INTEGER"
+                    "overtime_minutes": "ALTER TABLE attendance ADD COLUMN overtime_minutes INTEGER",
+                    # HEROIC FIX: Added migration for early_departure_minutes
+                    "early_departure_minutes": "ALTER TABLE attendance ADD COLUMN early_departure_minutes INTEGER"
                 }
                 
                 if 'launch_start' in attendance_columns and 'leave_start' not in attendance_columns:

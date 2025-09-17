@@ -39,12 +39,13 @@ class ExportService:
     def export_data(self, export_format: str, data: List[Dict[str, Any]], path: Path, title: str = "Attendance Report"):
         """Dispatches the export request to the correct method based on the format."""
         try:
+            translated_title = _("attendance_report_title")
             if export_format == 'csv':
                 return self.export_to_csv(data, path)
             elif export_format == 'xlsx':
-                return self.export_to_xlsx(data, path)
+                return self.export_to_xlsx(data, path, title=translated_title)
             elif export_format == 'pdf':
-                return self.export_to_pdf(data, path, title=title)
+                return self.export_to_pdf(data, path, title=translated_title)
             else:
                 raise ExportServiceError(f"Unsupported export format: {export_format}")
         except Exception as e:
@@ -58,48 +59,50 @@ class ExportService:
         processed_data = []
         date_format_pref = config.settings.get("date_format", "both")
 
+        # HEROIC FIX: This map now directly uses the translated keys.
+        minute_keys_map = {
+            _("Tardiness (min)"): _("Tardiness (H:M)"),
+            _("Early Departure (min)"): _("Early Departure (H:M)"),
+            _("Main Work (min)"): _("Main Work (H:M)"),
+            _("Overtime (min)"): _("Overtime (H:M)"),
+            _("Launch Time (min)"): _("Launch Time (H:M)"),
+            _("Total Duration (min)"): _("Total Duration (H:M)"),
+            _("Leave (min)"): _("Leave (H:M)"),
+            _("Used Leave This Month (min)"): _("Used Leave This Month (H:M)"),
+            _("Remaining Leave This Month (min)"): _("Remaining Leave This Month (H:M)")
+        }
+
         for row in data:
             processed_row = row.copy()
             
-            greg_date = processed_row.get(_("Date"))
-            if isinstance(greg_date, str):
+            # Handle date formatting
+            date_key = _("Date")
+            greg_date_str = processed_row.get(date_key)
+            if isinstance(greg_date_str, str):
                 try:
-                    greg_date = datetime.date.fromisoformat(greg_date)
+                    greg_date = datetime.date.fromisoformat(greg_date_str)
+                    if date_format_pref == 'jalali':
+                        processed_row[date_key] = jdatetime.date.fromgregorian(date=greg_date).strftime("%Y/%m/%d")
+                    elif date_format_pref == 'gregorian':
+                        processed_row[date_key] = greg_date.isoformat()
+                    else: 
+                        j_date_str = jdatetime.date.fromgregorian(date=greg_date).strftime("%Y/%m/%d")
+                        g_date_str = greg_date.isoformat()
+                        processed_row[date_key] = f"{j_date_str} | {g_date_str}"
                 except (ValueError, TypeError):
-                    pass
-
-            if isinstance(greg_date, datetime.date):
-                date_key = _("Date")
-                if date_format_pref == 'jalali':
-                    processed_row[date_key] = jdatetime.date.fromgregorian(date=greg_date).strftime("%Y/%m/%d")
-                elif date_format_pref == 'gregorian':
-                    processed_row[date_key] = greg_date.isoformat()
-                else: 
-                    j_date_str = jdatetime.date.fromgregorian(date=greg_date).strftime("%Y/%m/%d")
-                    g_date_str = greg_date.isoformat()
-                    processed_row[date_key] = f"{j_date_str} | {g_date_str}"
+                    pass # Keep original string if parsing fails
             
+            # Handle time formatting
             for key in [_("Time In"), _("Time Out")]:
                 time_val = processed_row.get(key)
                 if isinstance(time_val, datetime.time):
                     processed_row[key] = time_val.strftime("%H:%M")
 
-            minute_keys_map = {
-                "Tardiness (min)": "Tardiness (H:M)",
-                "Main Work (min)": "Main Work (H:M)",
-                "Overtime (min)": "Overtime (H:M)",
-                "Launch Time (min)": "Launch Time (H:M)",
-                "Total Duration (min)": "Total Duration (H:M)",
-                "Leave (min)": "Leave (H:M)",
-                "Used Leave This Month (min)": "Used Leave This Month (H:M)",
-                "Remaining Leave This Month (min)": "Remaining Leave This Month (H:M)"
-            }
-
+            # Handle minute to H:M conversion
             for min_key, hm_key in minute_keys_map.items():
-                translated_min_key = _(min_key)
-                if translated_min_key in processed_row:
-                    translated_hm_key = _(hm_key)
-                    processed_row[translated_hm_key] = minutes_to_hhmm(processed_row.pop(translated_min_key))
+                if min_key in processed_row:
+                    minutes_val = processed_row.pop(min_key)
+                    processed_row[hm_key] = minutes_to_hhmm(minutes_val)
             
             processed_data.append(processed_row)
         return processed_data
@@ -127,7 +130,7 @@ class ExportService:
             self.logger.error(f"Error exporting to CSV: {e}", exc_info=True)
             raise ExportServiceError(f"Failed to export to CSV: {e}") from e
 
-    def export_to_xlsx(self, data: List[Dict[str, Any]], filename: Path) -> Path:
+    def export_to_xlsx(self, data: List[Dict[str, Any]], filename: Path, title: str) -> Path:
         """Export data to an Excel (XLSX) file with formatting."""
         try:
             if not data:
@@ -139,7 +142,11 @@ class ExportService:
 
             wb = Workbook()
             ws = wb.active
-            ws.title = _("Attendance Report")
+            ws.title = title
+
+            # Set sheet direction for RTL languages
+            if config.settings.get("language", "en") == "fa":
+                ws.sheet_view.rightToLeft = True
 
             headers = list(processed_data[0].keys())
             ws.append(headers)
@@ -150,6 +157,7 @@ class ExportService:
 
             header_font = Font(bold=True)
             center_alignment = Alignment(horizontal="center", vertical="center")
+            
             for col_num, column_title in enumerate(headers, 1):
                 cell = ws.cell(row=1, column=col_num)
                 cell.font = header_font
@@ -162,7 +170,8 @@ class ExportService:
                 adjusted_width = max_length + 4
                 ws.column_dimensions[get_column_letter(col_num)].width = min(adjusted_width, 40)
                 
-                if "(h:m)" in column_title.lower() or "time" in column_title.lower():
+                # Heuristic to find time-related columns for centering
+                if any(sub in str(column_title).lower() for sub in ["(h:m)", "time", "(ساعت)", "زمان"]):
                     for row in range(1, ws.max_row + 1):
                         ws.cell(row=row, column=col_num).alignment = center_alignment
 
@@ -173,7 +182,7 @@ class ExportService:
             self.logger.error(f"Error exporting to XLSX: {e}", exc_info=True)
             raise ExportServiceError(f"Failed to export to XLSX: {e}") from e
 
-    def export_to_pdf(self, data: List[Dict[str, Any]], filename: Path, title: str = "Attendance Report") -> Path:
+    def export_to_pdf(self, data: List[Dict[str, Any]], filename: Path, title: str) -> Path:
         """Export data to a PDF file, handling RTL for Persian language."""
         try:
             if not data:
@@ -182,18 +191,16 @@ class ExportService:
             doc = SimpleDocTemplate(str(filename), pagesize=landscape(A4))
             elements = []
             
-            # --- Language and Font Handling ---
             is_persian = config.settings.get("language", "en") == "fa"
             font_name = 'Vazir' if is_persian else 'Helvetica'
             bold_font_name = 'Vazir' if is_persian else 'Helvetica-Bold'
 
             styles = getSampleStyleSheet()
-            styles.add(ParagraphStyle(name='Title_FA', parent=styles['Title'], fontName=font_name))
-            styles.add(ParagraphStyle(name='Body_FA', parent=styles['Normal'], fontName=font_name, alignment=2)) # Right-aligned for RTL
+            title_align = 2 if is_persian else 1 # 2=RIGHT, 1=CENTER
+            styles.add(ParagraphStyle(name='Title_Custom', parent=styles['Title'], fontName=font_name, alignment=title_align))
+            styles.add(ParagraphStyle(name='Body_Custom', parent=styles['Normal'], fontName=font_name, alignment=2))
 
-            title_style = styles['Title_FA'] if is_persian else styles['Title']
-            
-            elements.append(Paragraph(title, title_style))
+            elements.append(Paragraph(title, styles['Title_Custom']))
             elements.append(Spacer(1, 0.2*inch))
             
             processed_data = self._process_data_for_export(data)
@@ -203,11 +210,12 @@ class ExportService:
             headers = list(processed_data[0].keys())
             table_data = [[str(row.get(h, "")) for h in headers] for row in processed_data]
 
-            # --- RTL Handling ---
             if is_persian:
+                # Reverse for RTL display
                 headers.reverse()
                 table_data = [row[::-1] for row in table_data]
 
+            # Re-insert headers at the top
             table_data.insert(0, headers)
             
             table = Table(table_data, repeatRows=1)
@@ -217,14 +225,15 @@ class ExportService:
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
                 ('FONTNAME', (0, 0), (-1, 0), bold_font_name),
-                ('FONTNAME', (0, 1), (-1, -1), font_name), # Font for body
+                ('FONTNAME', (0, 1), (-1, -1), font_name),
                 ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black)
             ])
             table.setStyle(style)
 
-            for i, row in enumerate(table_data[1:], start=1):
+            # Alternating row colors
+            for i in range(1, len(table_data)):
                 if i % 2 == 0:
                     table.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.lightgrey)]))
             
