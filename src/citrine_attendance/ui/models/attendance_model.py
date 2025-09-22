@@ -39,6 +39,7 @@ class AttendanceTableModel(QAbstractTableModel):
         self.employee_cache = {}
         self.monthly_leave_cache = {}
         self.filters = {}
+        self.column_totals = {}
         self.COLUMN_HEADERS = [
             _("attendance_header_employee"), _("attendance_header_date"),
             _("attendance_header_time_in"), _("attendance_header_time_out"),
@@ -94,6 +95,7 @@ class AttendanceTableModel(QAbstractTableModel):
 
             self.beginResetModel()
             self.attendance_data = records
+            self.calculate_column_totals()
             self.endResetModel()
             self.logger.debug(f"Loaded {len(self.attendance_data)} records into model.")
 
@@ -104,6 +106,16 @@ class AttendanceTableModel(QAbstractTableModel):
             self.endResetModel()
         finally:
             db_session.close()
+
+    def calculate_column_totals(self):
+        """Calculate the sum of specific columns."""
+        self.column_totals = {
+            'tardiness': sum(r.tardiness_minutes for r in self.attendance_data if r.tardiness_minutes),
+            'early_departure': sum(r.early_departure_minutes for r in self.attendance_data if r.early_departure_minutes),
+            'main_work': sum(r.main_work_minutes for r in self.attendance_data if r.main_work_minutes),
+            'overtime': sum(r.overtime_minutes for r in self.attendance_data if r.overtime_minutes),
+            'total_duration': sum(r.duration_minutes for r in self.attendance_data if r.duration_minutes),
+        }
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.attendance_data)

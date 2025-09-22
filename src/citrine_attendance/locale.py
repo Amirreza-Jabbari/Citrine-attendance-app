@@ -32,7 +32,7 @@ TRANSLATIONS = {
         "confirm_exit": "Confirm Exit",
         "are_you_sure_quit": "Are you sure you want to quit?",
         "dashboard_welcome": "Welcome, {username}!",
-        "dashboard_title": "dashboard",
+        "dashboard_title": "Dashboard",
         "dashboard_role": "Role: {role}",
         "dashboard_present_today": "Present Today",
         "dashboard_absent_today": "Absent Today",
@@ -45,9 +45,9 @@ TRANSLATIONS = {
         "dashboard_please_select_employee": "Please select an employee first.",
         "dashboard_success": "Success",
         "dashboard_action_recorded": "{action} recorded successfully for {employee} on {date} at {time}.",
-        "error": "Error", # HEROIC FIX: Generic error title
-        "dashboard_error_message": "Error during {action} for Employee ID {employee_id}: {error}", # HEROIC FIX: Specific key for message
-        "employee_view_title": "employees",
+        "error": "Error",
+        "dashboard_error_message": "Error during {action} for Employee ID {employee_id}: {error}",
+        "employee_view_title": "Employees",
         "employee_add": "Add Employee",
         "employee_edit": "Edit Employee",
         "employee_delete": "Delete Employee",
@@ -81,6 +81,7 @@ TRANSLATIONS = {
         "attendance_filter_status": "Status:",
         "attendance_filter_present": "Present",
         "attendance_filter_absent": "Absent",
+        "attendance_filter_partial": "Partial", # BUG FIX: Added key for the new filter
         "attendance_status_on_leave": "On Leave",
         "attendance_filter_search": "Search:",
         "attendance_filter_search_placeholder": "Search notes or status...",
@@ -111,6 +112,8 @@ TRANSLATIONS = {
         "attendance_header_launch": "Launch",
         "attendance_header_leave": "Leave",
         "attendance_header_total_duration": "Total Duration",
+        "attendance_header_used_leave": "Used Leave",
+        "attendance_header_remaining_leave": "Remaining Leave",
         "reports_report_type": "Report Type:",
         "reports_select_report": "--- Select a Report ---",
         "reports_daily_summary": "Daily Summary",
@@ -194,10 +197,30 @@ TRANSLATIONS = {
         "error_duplicating_record": "Error duplicating record: {error}",
         "error_adding_record": "Error adding record: {error}",
         "error_updating_record": "Error updating record: {error}",
-        "attendance_header_used_leave": "Used Leave",
-        "attendance_header_remaining_leave": "Remaining Leave",
         
-        # HEROIC FIX: Explicitly add all export keys for clarity and fallback
+        # --- Common UI Keys ---
+        "edit": "Edit",
+        "delete": "Delete",
+        "duplicate": "Duplicate",
+        "success": "Success",
+        "select_month": "--- Select Month ---",
+        "all_employees": "--- All Employees ---",
+        "loading_aggregates": "Loading aggregates...",
+        "no_data_for_filters": "No data available for the current filters.",
+        "record_added_success": "Record added successfully.",
+        "record_updated_success": "Record updated successfully.",
+        "record_duplicated_success": "Record successfully duplicated to {date}.",
+        "confirm_delete_title": "Confirm Deletion",
+        "confirm_delete_record_message": "Are you sure you want to delete the record for {name} on {date}?",
+        "no_data_to_export": "No Data to Export",
+        "confirm_overwrite_title": "Confirm File Overwrite",
+        "confirm_overwrite_message": "The file '{file}' already exists. Do you want to overwrite it?",
+        "export_successful_title": "Export Successful",
+        "export_successful_message": "The data was successfully exported to {path}.",
+        "export_error_title": "Export Error",
+        "export_error_message": "The export failed with the following error: {error}",
+        
+        # --- Export Header Keys ---
         "attendance_report_title": "Attendance Report",
         "Employee Name": "Employee Name",
         "Date": "Date",
@@ -254,6 +277,7 @@ TRANSLATIONS = {
         "confirm_exit": "تایید خروج",
         "are_you_sure_quit": "آیا برای خروج مطمئن هستید؟",
         "dashboard_welcome": "خوش آمدید، {username}!",
+        "dashboard_title": "پنل داشبورد",
         "dashboard_role": "نقش: {role}",
         "dashboard_present_today": "حاضرین امروز",
         "dashboard_absent_today": "غایبین امروز",
@@ -266,8 +290,9 @@ TRANSLATIONS = {
         "dashboard_please_select_employee": "لطفا ابتدا یک کارمند را انتخاب کنید.",
         "dashboard_success": "موفق",
         "dashboard_action_recorded": "{action} برای {employee} در تاریخ {date} ساعت {time} با موفقیت ثبت شد.",
-        "error": "خطا", # HEROIC FIX: Generic error title
-        "dashboard_error_message": "خطا در هنگام {action} برای کارمند با شناسه {employee_id}: {error}", # HEROIC FIX: Specific key for message
+        "error": "خطا",
+        "dashboard_error_message": "خطا در هنگام {action} برای کارمند با شناسه {employee_id}: {error}",
+        "employee_view_title": "مدیریت کارمندان",
         "employee_add": "افزودن کارمند",
         "employee_edit": "ویرایش کارمند",
         "employee_delete": "حذف کارمند",
@@ -301,6 +326,7 @@ TRANSLATIONS = {
         "attendance_filter_status": "وضعیت:",
         "attendance_filter_present": "حاضر",
         "attendance_filter_absent": "غایب",
+        "attendance_filter_partial": "ناقص", # BUG FIX: Added key for the new filter
         "attendance_status_on_leave": "در مرخصی",
         "attendance_filter_search": "جستجو:",
         "attendance_filter_search_placeholder": "جستجو در یادداشت ها یا وضعیت...",
@@ -331,6 +357,8 @@ TRANSLATIONS = {
         "attendance_header_launch": "ناهار",
         "attendance_header_leave": "مرخصی",
         "attendance_header_total_duration": "مدت کل",
+        "attendance_header_used_leave": "مرخصی استفاده شده",
+        "attendance_header_remaining_leave": "مرخصی باقی مانده",
         "reports_report_type": "نوع گزارش:",
         "reports_select_report": "--- انتخاب گزارش ---",
         "reports_daily_summary": "خلاصه روزانه",
@@ -408,20 +436,36 @@ TRANSLATIONS = {
         "settings_error_loading_audit_log": "خطا در بارگیری گزارش حسابرسی: {error}",
         "settings_launch_start": "شروع تایم ناهار:",
         "settings_launch_end": "پایان تایم ناهار:",
-        "attendance_launch_start": "شروع ناهار:",
-        "attendance_launch_end": "پایان ناهار:",
-        "dashboard_title": "پنل داشبورد",
-        "employee_view_title": "مدیریت کارمندان",
         "error_loading_filter_data": "خطا در بارگیری داده‌های فیلتر: {error}",
         "error_loading_attendance_data": "خطا در بارگیری داده‌های حضور و غیاب: {error}",
         "error_deleting_record": "خطا در حذف رکورد: {error}",
         "error_duplicating_record": "خطا در تکثیر رکورد: {error}",
         "error_adding_record": "خطا در افزودن رکورد: {error}",
         "error_updating_record": "خطا در به‌روزرسانی رکورد: {error}",
-        "attendance_header_used_leave": "مرخصی استفاده شده",
-        "attendance_header_remaining_leave": "مرخصی باقی مانده",
 
-        # HEROIC FIX: Add all missing translations for export headers
+        # --- Common UI Keys ---
+        "edit": "ویرایش",
+        "delete": "حذف",
+        "duplicate": "تکثیر",
+        "success": "موفق",
+        "select_month": "--- انتخاب ماه ---",
+        "all_employees": "--- همه کارمندان ---",
+        "loading_aggregates": "در حال بارگذاری مجموع...",
+        "no_data_for_filters": "داده‌ای برای فیلترهای فعلی موجود نیست.",
+        "record_added_success": "رکورد با موفقیت اضافه شد.",
+        "record_updated_success": "رکورد با موفقیت به‌روزرسانی شد.",
+        "record_duplicated_success": "رکورد با موفقیت در تاریخ {date} تکثیر شد.",
+        "confirm_delete_title": "تایید حذف",
+        "confirm_delete_record_message": "آیا از حذف رکورد برای {name} در تاریخ {date} مطمئن هستید؟",
+        "no_data_to_export": "داده‌ای برای خروجی گرفتن وجود ندارد",
+        "confirm_overwrite_title": "تایید بازنویسی فایل",
+        "confirm_overwrite_message": "فایل '{file}' از قبل وجود دارد. آیا می‌خواهید آن را بازنویسی کنید؟",
+        "export_successful_title": "خروجی موفقیت آمیز",
+        "export_successful_message": "داده با موفقیت در مسیر {path} ذخیره شد.",
+        "export_error_title": "خطای خروجی",
+        "export_error_message": "خروجی با خطای زیر ناموفق بود: {error}",
+
+        # --- Export Header Keys ---
         "attendance_report_title": "گزارش حضور و غیاب",
         "Employee Name": "نام کارمند",
         "Date": "تاریخ",
@@ -465,7 +509,7 @@ class Translator:
         
         try:
             return translation.format(**kwargs)
-        except KeyError:
+        except (KeyError, ValueError):
             # If formatting fails, return the raw translation string
             # to avoid crashing the app.
             return translation

@@ -1,10 +1,12 @@
 # src/citrine_attendance/services/attendance_service.py
+
 import logging
 import re
 from typing import List, Optional, Dict
 from sqlalchemy.orm import Session, joinedload, aliased
 from sqlalchemy import and_, func
 import datetime
+
 from ..database import Attendance, Employee, get_db_session
 from ..config import config
 from .employee_service import employee_service
@@ -46,6 +48,10 @@ class AttendanceService:
     def _calculate_all_fields(self, record: Attendance):
         """
         Robust calculation of derived attendance fields with correct leave, overtime, and early departure handling.
+        This version:
+         - deducts lunch overlap from leave_duration_minutes
+         - excludes leave-overlap when calculating tardiness (so leave at late threshold cancels tardiness)
+         - computes main_work_minutes as workday - tardiness - early_departure (if any) to match expected semantics
         """
         def _norm_digits(s: str) -> str:
             if s is None: return ""
@@ -77,7 +83,7 @@ class AttendanceService:
         record.launch_duration_minutes = 0
         record.leave_duration_minutes = 0
         record.tardiness_minutes = 0
-        record.early_departure_minutes = 0 # HEROIC
+        record.early_departure_minutes = 0
         record.main_work_minutes = 0
         record.overtime_minutes = 0
         record.status = self.STATUS_ABSENT
@@ -107,10 +113,23 @@ class AttendanceService:
             end = min(a_end, b_end)
             return max(0, int((end - start).total_seconds() / 60))
 
+        # Prepare launch interval (used both for launch deductions and later calculations)
+        launch_s_dt, launch_e_dt = _normalize_interval(record.date, launch_start_time, launch_end_time)
+        total_launch_duration = int((launch_e_dt - launch_s_dt).total_seconds() / 60)
+
+        # Calculate leave duration (if provided) and deduct any lunch overlap from leave
+        ls_dt = le_dt = None
         if leave_start and leave_end:
             ls_dt, le_dt = _normalize_interval(record.date, leave_start, leave_end)
-            record.leave_duration_minutes = max(0, int((le_dt - ls_dt).total_seconds() / 60))
+            raw_leave_minutes = max(0, int((le_dt - ls_dt).total_seconds() / 60))
 
+            # Deduct lunch overlap from leave (per requirements)
+            overlap_leave_launch = _overlap_minutes(ls_dt, le_dt, launch_s_dt, launch_e_dt)
+            record.leave_duration_minutes = max(0, raw_leave_minutes - overlap_leave_launch)
+        else:
+            record.leave_duration_minutes = 0
+
+        # If no time_in -> if there's leave then status ON_LEAVE and return (leave already adjusted)
         if not time_in:
             if record.leave_duration_minutes > 0:
                 record.status = self.STATUS_ON_LEAVE
@@ -118,8 +137,18 @@ class AttendanceService:
 
         dt_in = datetime.datetime.combine(record.date, time_in)
         late_threshold_dt = datetime.datetime.combine(record.date, late_threshold_time)
-        record.tardiness_minutes = max(0, int((dt_in - late_threshold_dt).total_seconds() / 60))
-        
+
+        # Compute tardiness but subtract any leave overlap that covers part/all of the tardiness window.
+        if dt_in <= late_threshold_dt:
+            record.tardiness_minutes = 0
+        else:
+            raw_tardiness = int((dt_in - late_threshold_dt).total_seconds() / 60)
+            # compute overlap between leave interval and tardiness interval
+            overlap_leave_tardiness = 0
+            if ls_dt and le_dt:
+                overlap_leave_tardiness = _overlap_minutes(ls_dt, le_dt, late_threshold_dt, dt_in)
+            record.tardiness_minutes = max(0, raw_tardiness - overlap_leave_tardiness)
+
         if not time_out:
             record.status = self.STATUS_PARTIAL
             return
@@ -128,13 +157,13 @@ class AttendanceService:
         if dt_out <= dt_in: dt_out += datetime.timedelta(days=1)
 
         record.duration_minutes = int((dt_out - dt_in).total_seconds() / 60)
-        
-        launch_s_dt, launch_e_dt = _normalize_interval(record.date, launch_start_time, launch_end_time)
+
+        # Recompute launch_duration_minutes as overlap between presence interval and launch interval.
         record.launch_duration_minutes = _overlap_minutes(dt_in, dt_out, launch_s_dt, launch_e_dt)
-        
+
         # HEROIC FIX: Implemented new overtime and early departure logic
         try:
-            total_launch_duration = int((launch_e_dt - launch_s_dt).total_seconds() / 60)
+            # end_of_work_dt is defined as late_threshold + workday minutes + lunch duration
             end_of_work_dt = late_threshold_dt + datetime.timedelta(minutes=(workday_minutes + total_launch_duration))
 
             if dt_out > end_of_work_dt:
@@ -153,9 +182,10 @@ class AttendanceService:
             record.overtime_minutes = max(0, net_work_minutes_fallback - workday_minutes)
             record.early_departure_minutes = 0 # No fallback for early departure
 
-        net_work_minutes = record.duration_minutes - record.launch_duration_minutes - record.leave_duration_minutes
-        record.main_work_minutes = max(0, net_work_minutes - record.overtime_minutes)
-        
+        # MAIN-WORK: user-desired semantics: allocated workday minus tardiness and minus early-departure (if any).
+        # This matches expectations where main_work = workday - tardiness (and reduced further by early departure).
+        record.main_work_minutes = max(0, workday_minutes - record.tardiness_minutes - record.early_departure_minutes)
+
         record.status = self.STATUS_PRESENT
 
     def _validate_leave_balance(self, employee_id: int, date: datetime.date, new_leave_minutes: int, db: Session, old_record_id: Optional[int] = None):
@@ -276,7 +306,6 @@ class AttendanceService:
                 return query.order_by(Attendance.date.desc(), employee_alias.last_name).all()
         finally:
             if managed: session.close()
-
 
     def get_archived_attendance_records(self, db: Optional[Session] = None, **filters) -> List[Attendance]:
         managed = db is None
@@ -419,5 +448,6 @@ class AttendanceService:
             return {"present": present_count, "absent": total_employees - present_count}
         finally:
             if managed: session.close()
+
 
 attendance_service = AttendanceService()

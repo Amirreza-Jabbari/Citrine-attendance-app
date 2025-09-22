@@ -46,6 +46,8 @@ class AttendanceView(QWidget):
         self.load_attendance_data()
         self.setup_context_menu()
         self.setup_keyboard_shortcuts()
+        self.attendance_model.modelReset.connect(self.update_aggregation_label)
+
 
     def init_ui(self):
         """Initialize the attendance view UI."""
@@ -91,6 +93,9 @@ class AttendanceView(QWidget):
         self.status_present_cb = QCheckBox(_("attendance_filter_present"), checked=True)
         self.status_absent_cb = QCheckBox(_("attendance_filter_absent"), checked=True)
         self.status_on_leave_cb = QCheckBox(_("attendance_status_on_leave"), checked=True)
+        # BUG FIX: Add a checkbox for "Partial" status and check it by default.
+        # This ensures records without a time_out remain visible after editing.
+        self.status_partial_cb = QCheckBox(_("attendance_filter_partial"), checked=True)
 
         self.search_filter_edit = QLineEdit(placeholderText=_("attendance_filter_search_placeholder"))
         self.add_record_btn = QPushButton(_("attendance_add_record"))
@@ -111,6 +116,8 @@ class AttendanceView(QWidget):
         filter_layout.addWidget(self.status_present_cb)
         filter_layout.addWidget(self.status_absent_cb)
         filter_layout.addWidget(self.status_on_leave_cb)
+        # BUG FIX: Add the new "Partial" checkbox to the layout.
+        filter_layout.addWidget(self.status_partial_cb)
         filter_layout.addWidget(self.search_filter_edit)
         filter_layout.addStretch()
         filter_layout.addWidget(self.add_record_btn)
@@ -125,6 +132,8 @@ class AttendanceView(QWidget):
         self.status_present_cb.stateChanged.connect(self.load_attendance_data)
         self.status_absent_cb.stateChanged.connect(self.load_attendance_data)
         self.status_on_leave_cb.stateChanged.connect(self.load_attendance_data)
+        # BUG FIX: Connect the new checkbox's signal to reload data.
+        self.status_partial_cb.stateChanged.connect(self.load_attendance_data)
         self.search_filter_edit.textChanged.connect(self.load_attendance_data)
         self.refresh_button.clicked.connect(self.load_attendance_data)
         self.add_record_btn.clicked.connect(self.open_add_record_dialog)
@@ -206,6 +215,8 @@ class AttendanceView(QWidget):
             if self.status_present_cb.isChecked(): statuses.append('present')
             if self.status_absent_cb.isChecked(): statuses.append('absent')
             if self.status_on_leave_cb.isChecked(): statuses.append('on_leave')
+            # BUG FIX: Include 'partial' in the status filter if the checkbox is checked.
+            if self.status_partial_cb.isChecked(): statuses.append('partial')
 
             self.attendance_model.set_filters(
                 employee_id=self.employee_filter_combo.currentData(),
@@ -217,6 +228,32 @@ class AttendanceView(QWidget):
         except Exception as e:
             self.logger.error(f"Error loading attendance data: {e}", exc_info=True)
             QMessageBox.critical(self, _("dashboard_error"), _("error_loading_attendance_data", error=e))
+
+    def update_aggregation_label(self):
+        """Updates the aggregation label with totals from the model."""
+        if self.employee_filter_combo.currentData() is None:
+            self.aggregation_label.setText("")
+            return
+
+        totals = self.attendance_model.column_totals
+        if not totals:
+            self.aggregation_label.setText(_("no_data_for_filters"))
+            return
+
+        total_tardiness = minutes_to_hhmm(totals.get('tardiness', 0))
+        total_early_departure = minutes_to_hhmm(totals.get('early_departure', 0))
+        total_main_work = minutes_to_hhmm(totals.get('main_work', 0))
+        total_overtime = minutes_to_hhmm(totals.get('overtime', 0))
+        total_duration = minutes_to_hhmm(totals.get('total_duration', 0))
+
+        text = (
+            f"<b>{_('attendance_header_tardiness')}:</b> {total_tardiness} | "
+            f"<b>{_('attendance_header_early_departure')}:</b> {total_early_departure} | "
+            f"<b>{_('attendance_header_main_work')}:</b> {total_main_work} | "
+            f"<b>{_('attendance_header_overtime')}:</b> {total_overtime} | "
+            f"<b>{_('attendance_header_total_duration')}:</b> {total_duration}"
+        )
+        self.aggregation_label.setText(text)
 
     def setup_context_menu(self):
         """Setup the context menu for the table view."""
