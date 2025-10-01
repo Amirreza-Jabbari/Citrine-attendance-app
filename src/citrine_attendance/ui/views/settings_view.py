@@ -2,14 +2,19 @@
 import logging
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QFormLayout, QLabel, QComboBox,
-    QPushButton, QMessageBox, QSpinBox, QTextEdit, QTabWidget, QGroupBox, QLineEdit
+    QPushButton, QMessageBox, QSpinBox, QTextEdit, QTabWidget, QGroupBox, QLineEdit,
+    QDialog, QDialogButtonBox, QListWidget, QHBoxLayout
 )
 from PyQt6.QtCore import Qt, QTime
 from ...config import config
 from ...services.user_service import user_service, UserServiceError
 from ...database import User, get_db_session
-from ...locale import _
+from ...locale import _, translator
+import re
 from ..widgets.custom_time_edit import CustomTimeEdit
+
+logger = logging.getLogger(__name__)
+
 
 class SettingsView(QWidget):
     def __init__(self, current_user, main_window_ref=None):
@@ -17,64 +22,121 @@ class SettingsView(QWidget):
         self.logger = logging.getLogger(__name__)
         self.current_user = current_user
         self.main_window = main_window_ref
+
+        # keep a reference to title/save button for retranslation
+        self.title_label = None
+        self.save_button = None
+
+        # UI placeholders (some widgets created later)
+        self.language_combo = None
+        self.date_format_combo = None
+
         self.init_ui()
         self.populate_settings()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
-        title_label = QLabel(_("settings_title"))
-        title_label.setObjectName("viewTitle")
-        main_layout.addWidget(title_label)
+        # Title label (kept as attribute so we can retranslate)
+        self.title_label = QLabel(_("settings_title"))
+        self.title_label.setObjectName("viewTitle")
+        main_layout.addWidget(self.title_label)
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs, 1)
 
+        # Create tabs (we build them via methods so we can rebuild on language change)
         self.create_general_tab()
+        self.create_holidays_tab()
         self.create_backups_tab()
         self.create_users_tab()
         self.create_audit_log_tab()
-        
+
+        # Save button (kept as attribute to update text)
         self.save_button = QPushButton(_("settings_save_button"))
         self.save_button.clicked.connect(self.save_settings)
         main_layout.addWidget(self.save_button, 0, Qt.AlignmentFlag.AlignRight)
 
+        # load lists used in admin tabs
         self.load_users_list()
         self.load_audit_log()
+
+    def recreate_tabs_for_language(self):
+        """
+        Rebuild all tabs (used when language changes so UI texts update).
+        Keep tabs cleared and re-create them in the same order.
+        """
+        # Save current tab index to try to preserve selection
+        try:
+            idx = self.tabs.currentIndex()
+        except Exception:
+            idx = 0
+
+        # Clear and recreate tabs
+        self.tabs.clear()
+        self.create_general_tab()
+        self.create_holidays_tab()
+        self.create_backups_tab()
+        self.create_users_tab()
+        self.create_audit_log_tab()
+
+        # restore tab index if possible
+        try:
+            self.tabs.setCurrentIndex(min(idx, self.tabs.count() - 1))
+        except Exception:
+            pass
+
+        # update title and save button text
+        if self.title_label:
+            self.title_label.setText(_("settings_title"))
+        if self.save_button:
+            self.save_button.setText(_("settings_save_button"))
+
+        # reload data visible in tabs
+        self.populate_settings()
+        self.load_users_list()
+        self.load_audit_log()
+        # Reload holidays list if tab exists
+        try:
+            if hasattr(self, "load_holidays"):
+                self.load_holidays()
+        except Exception:
+            pass
 
     def create_general_tab(self):
         self.general_tab = QWidget()
         general_layout = QFormLayout(self.general_tab)
-        
+
         self.language_combo = QComboBox()
-        self.language_combo.addItems(["English", "Persian (فارسی)"])
-        self.language_combo.setItemData(0, "en")
-        self.language_combo.setItemData(1, "fa")
+        # localized labels for languages
+        self.language_combo.addItem(_("language_english"), "en")
+        self.language_combo.addItem(_("language_persian"), "fa")
+        # connect to change handler so UI updates immediately
+        # The handler accepts either index (signal) or string (callers)
+        self.language_combo.currentIndexChanged.connect(self.on_language_changed)
         general_layout.addRow(_("settings_language"), self.language_combo)
 
         self.date_format_combo = QComboBox()
-        self.date_format_combo.addItems(["Jalali and Gregorian", "Jalali Only", "Gregorian Only"])
-        self.date_format_combo.setItemData(0, "both")
-        self.date_format_combo.setItemData(1, "jalali")
-        self.date_format_combo.setItemData(2, "gregorian")
+        self.date_format_combo.addItem(_("settings_date_format_both"), "both")
+        self.date_format_combo.addItem(_("settings_date_format_jalali"), "jalali")
+        self.date_format_combo.addItem(_("settings_date_format_gregorian"), "gregorian")
         general_layout.addRow(_("settings_date_format"), self.date_format_combo)
-        
+
         self.workday_hours_spinbox = QSpinBox()
         self.workday_hours_spinbox.setRange(1, 24)
-        general_layout.addRow("Workday Duration (hours):", self.workday_hours_spinbox)
+        general_layout.addRow(_("settings_workday_hours_label"), self.workday_hours_spinbox)
 
-        # --- New Launch Time Settings ---
+        # --- Launch / Threshold Time Settings ---
         self.launch_start_edit = CustomTimeEdit()
         general_layout.addRow(_("settings_launch_start"), self.launch_start_edit)
-        
+
         self.launch_end_edit = CustomTimeEdit()
         general_layout.addRow(_("settings_launch_end"), self.launch_end_edit)
 
         self.late_threshold_edit = CustomTimeEdit()
-        general_layout.addRow("Late Threshold:", self.late_threshold_edit)
+        general_layout.addRow(_("settings_late_threshold_label"), self.late_threshold_edit)
 
         self.tabs.addTab(self.general_tab, _("settings_general_tab"))
 
     def create_backups_tab(self):
-        # Unchanged, but kept for context
         self.backup_tab = QWidget()
         backup_form = QFormLayout(self.backup_tab)
         self.backup_freq_spinbox = QSpinBox()
@@ -85,8 +147,122 @@ class SettingsView(QWidget):
         backup_form.addRow(_("settings_backup_retention"), self.backup_retention_spinbox)
         self.tabs.addTab(self.backup_tab, _("settings_backups_tab"))
 
+    def create_holidays_tab(self):
+        """
+        Create Holidays tab. Note: we avoid instantiating JalaliDateEdit eagerly
+        (it caused problems while re-creating tabs during language change).
+        Instead, Add -> opens a small dialog containing JalaliDateEdit only when needed.
+        """
+        self.holidays_tab = QWidget()
+        layout = QVBoxLayout(self.holidays_tab)
+
+        self.holidays_list = QListWidget()
+        layout.addWidget(self.holidays_list)
+
+        row = QHBoxLayout()
+        # Do NOT instantiate JalaliDateEdit here. We'll create it lazily inside add_holiday().
+        self.holiday_add_btn = QPushButton(_("settings_holiday_add"))
+        self.holiday_remove_btn = QPushButton(_("settings_holiday_remove"))
+        row.addWidget(self.holiday_add_btn)
+        row.addWidget(self.holiday_remove_btn)
+        layout.addLayout(row)
+
+        self.holiday_add_btn.clicked.connect(self.add_holiday)
+        self.holiday_remove_btn.clicked.connect(self.remove_selected_holiday)
+
+        self.tabs.addTab(self.holidays_tab, _("settings_holidays_tab"))
+        # load current holidays
+        self.load_holidays()
+
+    def load_holidays(self):
+        try:
+            raw = config.settings.get('holidays', []) or []
+            self.holidays_list.clear()
+            for h in raw:
+                # If string is YYYY-MM-DD treat as gregorian one-off; else MM-DD jalali recurring
+                if re.match(r"^\d{4}-\d{2}-\d{2}$", h):
+                    self.holidays_list.addItem(h)
+                else:
+                    # Display as Jalali month/day for clarity
+                    parts = h.split('-')
+                    if len(parts) == 2:
+                        mm = int(parts[0])
+                        dd = int(parts[1])
+                        # Show as MM-DD (Jalali)
+                        self.holidays_list.addItem(f"{mm:02d}-{dd:02d}")
+                    else:
+                        self.holidays_list.addItem(h)
+        except Exception as e:
+            logger.exception("Failed to load holidays: %s", str(e))
+
+    def add_holiday(self):
+        """
+        Open a short dialog containing JalaliDateEdit and OK/Cancel.
+        We construct JalaliDateEdit only when the user invokes this action
+        (avoids jdatetime recursion when re-creating the UI).
+        """
+        try:
+            # Import here to avoid module-level initialization side-effects
+            from ..widgets.jalali_date_edit import JalaliDateEdit
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle(_("settings_holiday_add"))
+            dlg_layout = QVBoxLayout(dlg)
+
+            picker = JalaliDateEdit()
+            dlg_layout.addWidget(picker)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+            dlg_layout.addWidget(buttons)
+
+            def on_accept():
+                try:
+                    qd = picker.date()
+                    pydate = qd.toPyDate()
+                    import jdatetime
+                    jdate = jdatetime.date.fromgregorian(date=pydate)
+                    mmdd = f"{jdate.month:02d}-{jdate.day:02d}"
+                    holidays = config.settings.get('holidays', []) or []
+                    if mmdd in holidays:
+                        QMessageBox.information(self, _("settings_holiday_add"), _("settings_holiday_already_exists"))
+                        dlg.reject()
+                        return
+                    holidays.append(mmdd)
+                    config.update_setting('holidays', holidays)
+                    self.load_holidays()
+                    dlg.accept()
+                except Exception as e:
+                    QMessageBox.critical(self, _("error"), str(e))
+                    dlg.reject()
+
+            buttons.accepted.connect(on_accept)
+            buttons.rejected.connect(dlg.reject)
+
+            dlg.exec()
+        except Exception as e:
+            logger.exception("Failed to open holiday picker: %s", str(e))
+            QMessageBox.critical(self, _("error"), str(e))
+
+    def remove_selected_holiday(self):
+        try:
+            sel = self.holidays_list.currentItem()
+            if not sel:
+                return
+            txt = sel.text()
+            holidays = config.settings.get('holidays', []) or []
+            if txt in holidays:
+                holidays.remove(txt)
+            else:
+                cleaned = txt
+                if cleaned in holidays:
+                    holidays.remove(cleaned)
+            config.update_setting('holidays', holidays)
+            self.load_holidays()
+        except Exception as e:
+            logger.exception("Failed to remove holiday: %s", str(e))
+            QMessageBox.critical(self, _("error"), str(e))
+
     def create_users_tab(self):
-        # Unchanged, but kept for context
         self.users_tab = QWidget()
         users_layout = QVBoxLayout(self.users_tab)
         add_user_group = QGroupBox(_("settings_add_user_group"))
@@ -117,7 +293,6 @@ class SettingsView(QWidget):
         self.tabs.addTab(self.users_tab, _("settings_users_tab"))
 
     def create_audit_log_tab(self):
-        # Unchanged, but kept for context
         self.audit_tab = QWidget()
         audit_layout = QVBoxLayout(self.audit_tab)
         audit_layout.addWidget(QLabel(_("settings_audit_log_header")))
@@ -130,9 +305,31 @@ class SettingsView(QWidget):
         self.tabs.addTab(self.audit_tab, _("settings_audit_log_tab"))
 
     def populate_settings(self):
-        settings = config.settings
-        self.language_combo.setCurrentIndex(self.language_combo.findData(settings.get("language", "en")))
-        self.date_format_combo.setCurrentIndex(self.date_format_combo.findData(settings.get("date_format", "both")))
+        """
+        Load saved settings into the UI.
+        When setting combo current index programmatically we block signals to avoid
+        triggering on_language_changed unintentionally.
+        """
+        settings = config.settings or {}
+        # set translator language before setting UI indexes so _() calls return correct text
+        lang = settings.get("language", "en")
+        translator.set_language(lang)
+
+        # set current indexes for combos (language and date format)
+        try:
+            if self.language_combo is not None:
+                self.language_combo.blockSignals(True)
+                self.language_combo.setCurrentIndex(self.language_combo.findData(settings.get("language", "en")))
+                self.language_combo.blockSignals(False)
+        except Exception:
+            pass
+
+        try:
+            if self.date_format_combo is not None:
+                self.date_format_combo.setCurrentIndex(self.date_format_combo.findData(settings.get("date_format", "both")))
+        except Exception:
+            pass
+
         self.workday_hours_spinbox.setValue(settings.get("workday_hours", 8))
         self.launch_start_edit.setTime(QTime.fromString(settings.get("default_launch_start_time", "12:30"), "HH:mm"))
         self.launch_end_edit.setTime(QTime.fromString(settings.get("default_launch_end_time", "13:30"), "HH:mm"))
@@ -140,17 +337,28 @@ class SettingsView(QWidget):
         self.backup_freq_spinbox.setValue(settings.get("backup_frequency_days", 1))
         self.backup_retention_spinbox.setValue(settings.get("backup_retention_count", 10))
 
+        # Update header and button labels now that translator language is set
+        if self.title_label:
+            self.title_label.setText(_("settings_title"))
+        if self.save_button:
+            self.save_button.setText(_("settings_save_button"))
+
     def save_settings(self):
         try:
-            config.update_setting("language", self.language_combo.currentData())
+            # Save language selection and update translator
+            chosen_lang = self.language_combo.currentData()
+            config.update_setting("language", chosen_lang)
+            translator.set_language(chosen_lang)
+
             config.update_setting("date_format", self.date_format_combo.currentData())
             config.update_setting("workday_hours", self.workday_hours_spinbox.value())
+
             # Ensure the saved time strings use ASCII digits only (normalize)
             def _normalize_time_str_for_save(qtime):
                 s = qtime.toString("HH:mm")
                 trans_table = str.maketrans({
-                    '۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9',
-                    '٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9'
+                    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
+                    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9'
                 })
                 return s.translate(trans_table)
 
@@ -162,39 +370,71 @@ class SettingsView(QWidget):
             config.update_setting("late_threshold_time", self.late_threshold_edit.time().toString("HH:mm"))
             config.update_setting("backup_frequency_days", self.backup_freq_spinbox.value())
             config.update_setting("backup_retention_count", self.backup_retention_spinbox.value())
-            
+
             QMessageBox.information(self, "Settings Saved", _("settings_saved_message"))
-            
+
+            # Some settings may require restart; prompt and close main window if user agrees
             if QMessageBox.question(self, _("settings_restart_required_title"), _("settings_restart_required_message")) == QMessageBox.StandardButton.Yes:
-                if self.main_window: self.main_window.close()
+                if self.main_window:
+                    self.main_window.close()
         except Exception as e:
+            logger.exception("Failed saving settings: %s", str(e))
             QMessageBox.critical(self, _("settings_save_error"), str(e))
+
+    def on_language_changed(self, index_or_value):
+        """
+        Called when the language combobox changes. It accepts either an index (from signal)
+        or a direct value if invoked programmatically. We set translator language and rebuild tabs.
+        """
+        try:
+            # if signal provided an index, map to data
+            if isinstance(index_or_value, int):
+                lang = self.language_combo.itemData(index_or_value)
+            else:
+                # assume it's the language code
+                lang = index_or_value
+
+            if not lang:
+                lang = "en"
+
+            # set translator language immediately
+            translator.set_language(lang)
+
+            # Recreate tabs so all labels/controls pick up new translations
+            self.recreate_tabs_for_language()
+
+            # Also persist choice to config (but do not trigger the restart flow now)
+            config.update_setting("language", lang)
+        except Exception as e:
+            # Avoid passing raw exception object into logger format (can cause issues)
+            logger.exception("Failed to change language: %s", str(e))
 
     # Other methods (add_new_user, load_users_list, load_audit_log) remain the same...
     def add_new_user(self):
-        # This method is unchanged
         if self.current_user.role != "admin":
-            QMessageBox.warning(self, "Access Denied", "Only admins can add users.")
+            QMessageBox.warning(self, _("settings_access_denied"), _("settings_only_admins_add_users"))
             return
         username = self.new_username_edit.text().strip()
         password = self.new_password_edit.text()
         role = self.new_role_combo.currentData()
         if not username or not password:
-            QMessageBox.warning(self, "Input Error", "Username and password are required.")
+            QMessageBox.warning(self, _("settings_input_error"), _("settings_username_password_required"))
             return
         try:
             user_service.create_user(username, password, role)
-            QMessageBox.information(self, "Success", f"User '{username}' created.")
+            QMessageBox.information(self, _("success"), _("settings_user_created_success").format(username=username))
             self.new_username_edit.clear()
             self.new_password_edit.clear()
             self.load_users_list()
         except UserServiceError as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, _("error"), str(e))
 
     def load_users_list(self):
-        # This method is unchanged
         if self.current_user.role != "admin":
-            self.tabs.setTabEnabled(self.tabs.indexOf(self.users_tab), False)
+            try:
+                self.tabs.setTabEnabled(self.tabs.indexOf(self.users_tab), False)
+            except Exception:
+                pass
             return
         db = next(get_db_session())
         try:
@@ -204,9 +444,11 @@ class SettingsView(QWidget):
             db.close()
 
     def load_audit_log(self):
-        # This method is unchanged
         if self.current_user.role != "admin":
-            self.tabs.setTabEnabled(self.tabs.indexOf(self.audit_tab), False)
+            try:
+                self.tabs.setTabEnabled(self.tabs.indexOf(self.audit_tab), False)
+            except Exception:
+                pass
             return
         from ...database import AuditLog
         db = next(get_db_session())

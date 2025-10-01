@@ -8,6 +8,9 @@ from PyQt6.QtGui import QIcon
 import jdatetime
 import datetime
 import re
+from ...config import config
+from ...date_utils import is_holiday
+
 
 PERSIAN_MONTHS = [
     "فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
@@ -28,13 +31,19 @@ def persian_to_latin(s: str) -> str:
     return "".join(_LATIN_FROM_PERSIAN.get(ch, ch) for ch in s)
 
 def jdate_from_qdate(qd: QDate) -> jdatetime.date:
-    pydate = qd.toPyDate()
+    # QDate -> python date -> jdatetime.date
+    try:
+        pydate = qd.toPyDate()
+    except Exception:
+        # fallback for older/newer bindings
+        pydate = datetime.date(qd.year(), qd.month(), qd.day())
     return jdatetime.date.fromgregorian(date=pydate)
 
 def _is_jalali_leap(year: int) -> bool:
     """
-    Simple Jalali leap-year check using the 33-year cycle residues:
+    Jalali leap-year check using 33-year cycle residues:
     Leap years in cycle residues: 1,5,9,13,17,22,26,30
+    (fallback; jdatetime also has isleap but keep a safe local method)
     """
     try:
         y = int(year)
@@ -49,31 +58,28 @@ class PopupJalaliCalendar(QFrame):
     """
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        # ensure popup respects RTL
-        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        # ensure popup respects RTL visually
+        try:
+            self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        except Exception:
+            pass
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setObjectName("jalaliPopup")
 
-        # Accessible, high-contrast stylesheet — selected day is blue
-        # NOTE: weekday label is targeted by objectName (#weekdayLabel) and by property ([class="weekday"])
         self.setStyleSheet("""
         QFrame#jalaliPopup {
             background: #ffffff;
             border: 1px solid #cfd8dc;
-            border-radius: 10px;
+            border-radius: 8px;
             padding: 8px;
         }
-        /* month label */
-        QFrame#jalaliPopup QLabel#monthLabel {
+        QLabel#monthLabel {
             font-weight: 700;
-            color: #1f3a57; /* deep blue */
-            padding: 6px;
+            color: #1f3a57;
             font-size: 12pt;
         }
-        /* weekday labels (ش ی د س ...) */
-        QFrame#jalaliPopup QLabel#weekdayLabel,
-        QFrame#jalaliPopup QLabel[class="weekday"] {
-            color: #1f7ae0;   /* <- weekday color (change this hex to adjust) */
+        QLabel[class="weekday"] {
+            color: #1f7ae0;
             min-width: 36px;
             font-weight: bold;
         }
@@ -97,20 +103,26 @@ class PopupJalaliCalendar(QFrame):
             color: #1c2430;
         }
         QPushButton[role="day"]:hover { background: #e9f4ff; }
-        /* ACTIVE (selected) day: blue with good contrast */
         QPushButton[role="day"][selected="true"] {
-            background: #2f98ff; /* bright blue */
+            background: #2f98ff;
             color: #ffffff;
             font-weight: 700;
         }
+        QPushButton[role="day"][holiday="true"] {
+            background: transparent;
+            color: #b71c1c; /* red text for holidays */
+            font-weight: 700;
+        }
+        QPushButton[role="day"][holiday="true"]:hover { background: #ffecec; }
         """)
 
         self.vbox = QVBoxLayout(self)
         self.vbox.setSpacing(8)
+
         # header: nav buttons + month label
         header = QHBoxLayout()
         header.setSpacing(6)
-        # For RTL, visually left shows "next" arrow and right shows "prev"
+        # For RTL layout the order is visually handled by layout direction
         self.btn_next = QPushButton("▶")
         self.btn_next.setProperty("role", "nav")
         self.btn_prev = QPushButton("◀")
@@ -118,25 +130,21 @@ class PopupJalaliCalendar(QFrame):
         self.lbl_month = QLabel("")
         self.lbl_month.setObjectName("monthLabel")
         self.lbl_month.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
         header.addWidget(self.btn_next)
         header.addWidget(self.lbl_month, 1)
         header.addWidget(self.btn_prev)
-
         self.vbox.addLayout(header)
 
         # weekday header (Saturday .. Friday)
         weekday_layout = QHBoxLayout()
         weekday_layout.setSpacing(4)
+        # ensure weekday header respects RTL visually (container has RTL)
         for wd in PERSIAN_WEEKDAYS:
             lbl = QLabel(wd)
-            # set objectName and a property so stylesheet selectors can match
-            lbl.setObjectName("weekdayLabel")
             lbl.setProperty("class", "weekday")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setFixedWidth(36)
             weekday_layout.addWidget(lbl)
-            # force stylesheet application in case global QSS exists
             lbl.style().unpolish(lbl)
             lbl.style().polish(lbl)
         self.vbox.addLayout(weekday_layout)
@@ -151,6 +159,7 @@ class PopupJalaliCalendar(QFrame):
                 b = QPushButton("")
                 b.setProperty("role", "day")
                 b.setProperty("selected", "false")
+                b.setProperty("holiday", "false")
                 b.setCursor(Qt.CursorShape.PointingHandCursor)
                 b.clicked.connect(self._on_day_clicked)
                 b.setObjectName(f"dayBtn_{r}_{c}")
@@ -170,11 +179,18 @@ class PopupJalaliCalendar(QFrame):
     def open_for(self, jdate: jdatetime.date, on_date_selected):
         """Open popup for a given jdatetime.date and supply a callback:
            on_date_selected(gregorian_date: datetime.date)
+           Also highlights the provided day in the month (if applicable).
         """
         self._on_date_selected = on_date_selected
         self._current_jyear = jdate.year
         self._current_jmonth = jdate.month
         self._refresh()
+        # if jdate provided has a day in this month, highlight it
+        try:
+            sel_day = int(jdate.day)
+            self._mark_selected_day(sel_day)
+        except Exception:
+            pass
         self.adjustSize()
         self.show()
         self.raise_()
@@ -197,12 +213,13 @@ class PopupJalaliCalendar(QFrame):
         self._refresh()
 
     def _refresh(self):
+        """Render the month: set day labels, enabled state, and holiday property for each day."""
         # first day of this jalali month -> convert to gregorian to compute weekday
         first_j = jdatetime.date(self._current_jyear, self._current_jmonth, 1)
         gfirst = first_j.togregorian()
         py_weekday = gfirst.weekday()  # Mon=0..Sun=6
-        # convert to index where Saturday=0
-        start_index = (py_weekday - 5) % 7
+        # convert to index where Saturday=0, Sunday=1, Monday=2, ..., Friday=6
+        start_index = (py_weekday + 2) % 7
 
         # days in jalali month:
         if self._current_jmonth <= 6:
@@ -210,7 +227,11 @@ class PopupJalaliCalendar(QFrame):
         elif self._current_jmonth <= 11:
             days_in_month = 30
         else:
-            days_in_month = 30 if _is_jalali_leap(self._current_jyear) else 29
+            # use jdatetime's isleap if available, else fallback
+            try:
+                days_in_month = 30 if jdatetime.isleap(self._current_jyear) else 29
+            except Exception:
+                days_in_month = 30 if _is_jalali_leap(self._current_jyear) else 29
 
         # set month label (Persian month name + persian digits for year)
         self.lbl_month.setText(f"{PERSIAN_MONTHS[self._current_jmonth - 1]} {to_persian_digits(str(self._current_jyear))}")
@@ -222,27 +243,60 @@ class PopupJalaliCalendar(QFrame):
                 btn.setText("")
                 btn.setProperty("jalali_day", None)
                 btn.setProperty("selected", "false")
+                btn.setProperty("holiday", "false")
                 btn.setEnabled(False)
+                btn.setToolTip("")
                 btn.hide()
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
+                # re-polish so stylesheet updates are applied
+                try:
+                    btn.style().unpolish(btn)
+                    btn.style().polish(btn)
+                except Exception:
+                    pass
 
-        # Fill buttons but map week-day to RTL visual column:
-        # idx is index in calendar grid, week_day_index = idx % 7 (0=Saturday)
-        # visual column = 6 - week_day_index (Saturday at rightmost)
+        # Fill buttons: compute holiday property for each day
         for day in range(1, days_in_month + 1):
             idx = start_index + (day - 1)
             row = idx // 7
-            week_day_index = idx % 7  # 0..6
-            col = 6 - week_day_index   # invert so RTL visually
+            week_day_index = idx % 7  # 0..6 where 0=Saturday
+            col = week_day_index   # align column with weekday header
             if 0 <= row < 6 and 0 <= col < 7:
                 btn = self.day_buttons[row][col]
                 btn.setText(to_persian_digits(str(day)))
                 btn.setProperty("jalali_day", day)
                 btn.setEnabled(True)
                 btn.show()
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
+
+                # compute corresponding gregorian date for holiday check
+                try:
+                    jd_day = jdatetime.date(self._current_jyear, self._current_jmonth, day)
+                    gdate = jd_day.togregorian()
+                    # Use the app config and is_holiday util
+                    holiday_flag = False
+                    try:
+                        holiday_flag = is_holiday(gdate, config.settings if hasattr(config, 'settings') else None)
+                    except Exception:
+                        # fallback: don't mark holiday if helper throws
+                        holiday_flag = False
+
+                    btn.setProperty("holiday", "true" if holiday_flag else "false")
+                    if holiday_flag:
+                        # helpful tooltip showing exact Gregorian iso so you can confirm
+                        btn.setToolTip(gdate.isoformat())
+                    else:
+                        btn.setToolTip("")
+
+                except Exception:
+                    # If anything fails, ensure holiday property is reset
+                    btn.setProperty("holiday", "false")
+                    btn.setToolTip("")
+
+                # apply style updates
+                try:
+                    btn.style().unpolish(btn)
+                    btn.style().polish(btn)
+                except Exception:
+                    pass
 
     def _on_day_clicked(self):
         b = self.sender()
@@ -253,7 +307,11 @@ class PopupJalaliCalendar(QFrame):
         jd = jdatetime.date(self._current_jyear, self._current_jmonth, int(day))
         gdate = jd.togregorian()
         if callable(self._on_date_selected):
-            self._on_date_selected(gdate)
+            try:
+                self._on_date_selected(gdate)
+            except Exception:
+                # swallow exceptions from callback to avoid breaking widget
+                pass
         # visually mark selected
         self._mark_selected_day(day)
 
@@ -265,8 +323,11 @@ class PopupJalaliCalendar(QFrame):
                 if d:
                     selected = (int(d) == int(day_num))
                     btn.setProperty("selected", "true" if selected else "false")
-                    btn.style().unpolish(btn)
-                    btn.style().polish(btn)
+                    try:
+                        btn.style().unpolish(btn)
+                        btn.style().polish(btn)
+                    except Exception:
+                        pass
 
 class JalaliDateEdit(QWidget):
     """Composite widget: editable line + popup Jalali calendar.
@@ -280,8 +341,12 @@ class JalaliDateEdit(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # RTL for this composite widget
-        self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        # Visual layout direction: RTL
+        try:
+            self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        except Exception:
+            pass
+
         h = QHBoxLayout(self)
         h.setContentsMargins(0, 0, 0, 0)
         self.line = QLineEdit()
@@ -298,7 +363,11 @@ class JalaliDateEdit(QWidget):
         h.addWidget(self.btn)
 
         self._popup = PopupJalaliCalendar(self)
-        self._popup.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        try:
+            self._popup.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        except Exception:
+            pass
+
         self._selected_qdate = QDate.currentDate()
         # set initial text & keep consistent
         self.setDate(self._selected_qdate)
@@ -378,7 +447,7 @@ class JalaliDateEdit(QWidget):
         jd = jdate_from_qdate(qdate)
         display = f"{to_persian_digits(str(jd.year))}/{to_persian_digits(str(jd.month).zfill(2))}/{to_persian_digits(str(jd.day).zfill(2))}"
         self.line.setText(display)
-        # ensure popup will show same selection when opened
+        # ensure popup will show same selection when opened (emit signal for listeners)
         self.dateChanged.emit(self._selected_qdate)
 
     def date(self) -> QDate:
@@ -386,3 +455,12 @@ class JalaliDateEdit(QWidget):
 
     def setDateFromPyDate(self, pydate: datetime.date):
         self.setDate(QDate(pydate.year, pydate.month, pydate.day))
+
+if __name__ == '__main__':
+    # simple manual test
+    import sys
+    from PyQt6.QtWidgets import QApplication
+    app = QApplication(sys.argv)
+    w = JalaliDateEdit()
+    w.show()
+    sys.exit(app.exec())

@@ -10,7 +10,7 @@ import datetime
 from ..database import Attendance, Employee, get_db_session
 from ..config import config
 from .employee_service import employee_service
-from ..date_utils import get_jalali_month_range
+from ..date_utils import get_jalali_month_range, is_holiday
 from ..locale import _
 
 logger = logging.getLogger(__name__)
@@ -297,13 +297,19 @@ class AttendanceService:
                 if statuses:
                     all_records = [r for r in all_records if r.status in statuses]
 
+                # Remove configured holidays from the generated list
+                all_records = [r for r in all_records if not is_holiday(r.date)]
+
                 return sorted(all_records, key=lambda r: r.date, reverse=True)
             else:
                 if filters.get('start_date'): query = query.filter(Attendance.date >= filters['start_date'])
                 if filters.get('end_date'): query = query.filter(Attendance.date <= filters['end_date'])
                 if filters.get('statuses'): query = query.filter(Attendance.status.in_(filters['statuses']))
                 
-                return query.order_by(Attendance.date.desc(), employee_alias.last_name).all()
+                results = query.order_by(Attendance.date.desc(), employee_alias.last_name).all()
+                # Filter out holiday dates configured in app settings
+                results = [r for r in results if not is_holiday(r.date)]
+                return results
         finally:
             if managed: session.close()
 

@@ -114,3 +114,39 @@ def get_jalali_month_range(gregorian_date: datetime.date) -> Tuple[datetime.date
     end_gregorian = end_jalali.togregorian()
 
     return start_gregorian, end_gregorian
+
+# --- Holiday utilities ---
+def is_holiday(greg_date, config=None) -> bool:
+    """Return True if the given Gregorian date (datetime.date) matches a configured holiday.
+    Holidays configured are expected in app config (config.settings['holidays']) as:
+      - 'MM-DD' strings meaning Jalali recurring holidays (annual), e.g. '09-03'
+      - 'YYYY-MM-DD' strings meaning exact Gregorian dates (one-off).
+    The function accepts either form and checks them both.
+    """
+    try:
+        import jdatetime
+        from .config import config as _app_config
+    except Exception:
+        return False
+
+    if config is None:
+        config = _app_config.settings if hasattr(_app_config, 'settings') else {}
+
+    holidays = config.get('holidays', []) or []
+    # Normalize types
+    if not hasattr(greg_date, 'year'):
+        return False
+    # First check explicit Gregorian dates in config
+    iso = greg_date.isoformat()
+    if iso in holidays:
+        return True
+    # Convert to Jalali and check MM-DD
+    try:
+        jdate = jdatetime.date.fromgregorian(date=greg_date)
+        mmdd = f"{jdate.month:02d}-{jdate.day:02d}"
+        if mmdd in holidays:
+            return True
+    except Exception:
+        pass
+    return False
+

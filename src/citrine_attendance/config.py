@@ -21,6 +21,18 @@ DEFAULT_SETTINGS = {
     "default_launch_end_time": "16:30",   # Default launch end time
     "workday_hours": 8,
     "late_threshold_time": "10:00",
+    # Recurring Jalali holidays stored as MM-DD (month-day) in Jalali calendar.
+    # These are treated as yearly recurring holidays (no year).
+    # Example: '09-03' = 3 Azar
+    # Default off days provided by user:
+    # دوشنه ۳ آذر  -> 09-03
+    # شنبه ۱۳ دی   -> 10-13
+    # شنبه ۲۷ دی   -> 10-27
+    # چهارشنبه ۱۵ بهمن -> 11-15
+    # چهارشنبه ۲۲ بهمن -> 11-22
+    # چهارشنبه ۲۰ اسفند -> 12-20
+    # جمعه ۲۹ اسفند    -> 12-29
+    "holidays": ["09-03", "10-13", "10-27", "11-15", "11-22", "12-20", "12-29"],
 }
 
 class AppConfig:
