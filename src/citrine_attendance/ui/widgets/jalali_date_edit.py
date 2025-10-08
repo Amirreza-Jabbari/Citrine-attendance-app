@@ -58,11 +58,14 @@ class PopupJalaliCalendar(QFrame):
     """
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        # ensure popup respects RTL visually
+        # HEROIC FIX: ensure popup respects RTL visually - handle enum properly
         try:
             self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        except Exception:
-            pass
+        except (TypeError, AttributeError):
+            try:
+                self.setLayoutDirection(Qt.RightToLeft)
+            except:
+                pass  # Use default if all else fails
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setObjectName("jalaliPopup")
 
@@ -341,11 +344,14 @@ class JalaliDateEdit(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Visual layout direction: RTL
+        # HEROIC FIX: Visual layout direction: RTL - handle enum properly
         try:
             self.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        except Exception:
-            pass
+        except (TypeError, AttributeError):
+            try:
+                self.setLayoutDirection(Qt.RightToLeft)
+            except:
+                pass  # Use default if all else fails
 
         h = QHBoxLayout(self)
         h.setContentsMargins(0, 0, 0, 0)
@@ -363,10 +369,14 @@ class JalaliDateEdit(QWidget):
         h.addWidget(self.btn)
 
         self._popup = PopupJalaliCalendar(self)
+        # HEROIC FIX: Set popup layout direction - handle enum properly
         try:
             self._popup.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        except Exception:
-            pass
+        except (TypeError, AttributeError):
+            try:
+                self._popup.setLayoutDirection(Qt.RightToLeft)
+            except:
+                pass  # Use default if all else fails
 
         self._selected_qdate = QDate.currentDate()
         # set initial text & keep consistent

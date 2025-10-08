@@ -11,8 +11,17 @@ class CustomTimeEdit(QWidget):
     """
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Force the entire custom widget to LTR to ensure correct layout of its children
-        self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        # HEROIC FIX: Force the entire custom widget to LTR to ensure correct layout of its children
+        # PyQt6.6+ uses Qt.LayoutDirection.LeftToRight, older versions use Qt.LeftToRight
+        try:
+            # Try the newer PyQt6 enum style first
+            self.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+        except (TypeError, AttributeError):
+            # Fallback to older PyQt6 style
+            try:
+                self.setLayoutDirection(Qt.LeftToRight)
+            except:
+                pass  # If all else fails, use default layout direction
         self.init_ui()
 
     def init_ui(self):
@@ -25,14 +34,27 @@ class CustomTimeEdit(QWidget):
         self.time_edit = QLineEdit()
         self.time_edit.setInputMask("00:00")
         self.time_edit.setPlaceholderText("HH:MM")
-        # Ensure text is aligned left within the QLineEdit
-        self.time_edit.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        # HEROIC FIX: Ensure text is aligned left within the QLineEdit - handle enum properly
+        try:
+            self.time_edit.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        except (TypeError, AttributeError):
+            try:
+                self.time_edit.setAlignment(Qt.AlignLeft)
+            except:
+                pass  # Use default alignment if all else fails
 
         # Clear button
         self.clear_button = QPushButton("X")
         self.clear_button.setFixedSize(20, 20)
         self.clear_button.setFlat(True)
-        self.clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        # HEROIC FIX: Set cursor - handle enum properly
+        try:
+            self.clear_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        except (TypeError, AttributeError):
+            try:
+                self.clear_button.setCursor(Qt.PointingHandCursor)
+            except:
+                pass  # Use default cursor if all else fails
         self.clear_button.setStyleSheet("font-weight: bold; border: none;")
         self.clear_button.clicked.connect(self.clear)
 

@@ -150,7 +150,8 @@ class DashboardView(QWidget):
             
             self.logger.debug(f"Employee combo box refreshed with {len(employees)} employees.")
         except Exception as e:
-            self.logger.error(f"Error refreshing dashboard data: {e}", exc_info=True)
+            # HEROIC FIX: avoid recursion in Python 3.13 logging
+            self.logger.error(f"Error refreshing dashboard data: {e}")
             QMessageBox.critical(self, _("error"), _("dashboard_refresh_error", error=str(e)))
         finally:
             if db:
@@ -188,6 +189,7 @@ class DashboardView(QWidget):
             self.logger.warning(f"Attendance Error during {action_name} for Employee ID {emp_id}: {e}")
             QMessageBox.warning(self, _("warning"), str(e))
         except Exception as e:
-            self.logger.error(f"Error during {action_name} for Employee ID {emp_id}: {e}", exc_info=True)
+            # HEROIC FIX: avoid recursion in Python 3.13 logging
+            self.logger.error(f"Error during {action_name} for Employee ID {emp_id}: {e}")
             QMessageBox.critical(self, _("error"), _("dashboard_action_failed", action=action_name.lower(), error=str(e)))
 

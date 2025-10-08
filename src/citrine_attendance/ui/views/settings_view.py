@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QMessageBox, QSpinBox, QTextEdit, QTabWidget, QGroupBox, QLineEdit,
     QDialog, QDialogButtonBox, QListWidget, QHBoxLayout
 )
-from PyQt6.QtCore import Qt, QTime
+from PyQt6.QtCore import Qt, QTime, pyqtSignal
 from ...config import config
 from ...services.user_service import user_service, UserServiceError
 from ...database import User, get_db_session
@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsView(QWidget):
+    # HEROIC FIX: Signal to notify when language changes
+    language_changed = pyqtSignal(str)
+    
     def __init__(self, current_user, main_window_ref=None):
         super().__init__()
         self.logger = logging.getLogger(__name__)
@@ -59,10 +62,11 @@ class SettingsView(QWidget):
         self.load_users_list()
         self.load_audit_log()
 
-    def recreate_tabs_for_language(self):
+    def recreate_tabs_for_language(self, select_language: str | None = None):
         """
         Rebuild all tabs (used when language changes so UI texts update).
         Keep tabs cleared and re-create them in the same order.
+        If select_language is provided, set the language combo to that value without emitting signals.
         """
         # Save current tab index to try to preserve selection
         try:
@@ -90,8 +94,22 @@ class SettingsView(QWidget):
         if self.save_button:
             self.save_button.setText(_("settings_save_button"))
 
-        # reload data visible in tabs
-        self.populate_settings()
+        # Populate other settings
+        self._populate_other_settings()
+
+        # Set language combo to provided selection (without re-triggering signal)
+        if select_language and self.language_combo is not None:
+            try:
+                self.language_combo.blockSignals(True)
+                idx_lang = self.language_combo.findData(select_language)
+                if idx_lang >= 0:
+                    self.language_combo.setCurrentIndex(idx_lang)
+            finally:
+                try:
+                    self.language_combo.blockSignals(False)
+                except Exception:
+                    pass
+
         self.load_users_list()
         self.load_audit_log()
         # Reload holidays list if tab exists
@@ -179,21 +197,26 @@ class SettingsView(QWidget):
             raw = config.settings.get('holidays', []) or []
             self.holidays_list.clear()
             for h in raw:
-                # If string is YYYY-MM-DD treat as gregorian one-off; else MM-DD jalali recurring
-                if re.match(r"^\d{4}-\d{2}-\d{2}$", h):
-                    self.holidays_list.addItem(h)
-                else:
-                    # Display as Jalali month/day for clarity
-                    parts = h.split('-')
-                    if len(parts) == 2:
-                        mm = int(parts[0])
-                        dd = int(parts[1])
-                        # Show as MM-DD (Jalali)
-                        self.holidays_list.addItem(f"{mm:02d}-{dd:02d}")
-                    else:
+                try:
+                    # If string is YYYY-MM-DD treat as gregorian one-off; else MM-DD jalali recurring
+                    if re.match(r"^\d{4}-\d{2}-\d{2}$", h):
                         self.holidays_list.addItem(h)
-        except Exception as e:
-            logger.exception("Failed to load holidays: %s", str(e))
+                    else:
+                        # Display as Jalali month/day for clarity
+                        parts = h.split('-')
+                        if len(parts) == 2:
+                            mm = int(parts[0])
+                            dd = int(parts[1])
+                            # Show as MM-DD (Jalali)
+                            self.holidays_list.addItem(f"{mm:02d}-{dd:02d}")
+                        else:
+                            self.holidays_list.addItem(h)
+                except Exception:
+                    # Skip invalid holiday entries silently
+                    pass
+        except Exception:
+            # HEROIC FIX: Don't use logger.exception to avoid recursion in Python 3.13
+            pass
 
     def add_holiday(self):
         """
@@ -324,18 +347,43 @@ class SettingsView(QWidget):
         except Exception:
             pass
 
+        self._populate_other_settings()
+
+    def populate_settings_after_language_change(self, current_language):
+        """HEROIC FIX: Populate settings after language change without blocking language combo signals."""
+        settings = config.settings or {}
+        
+        # Set language combo WITHOUT blocking signals - this is crucial!
+        try:
+            if self.language_combo is not None:
+                # Don't block signals - we want the combo to remain interactive
+                idx = self.language_combo.findData(current_language)
+                if idx >= 0:
+                    self.language_combo.setCurrentIndex(idx)
+        except Exception:
+            pass
+
+        self._populate_other_settings()
+
+    def _populate_other_settings(self):
+        """HEROIC FIX: Helper to populate non-language settings."""
+        settings = config.settings or {}
+
         try:
             if self.date_format_combo is not None:
                 self.date_format_combo.setCurrentIndex(self.date_format_combo.findData(settings.get("date_format", "both")))
         except Exception:
             pass
 
-        self.workday_hours_spinbox.setValue(settings.get("workday_hours", 8))
-        self.launch_start_edit.setTime(QTime.fromString(settings.get("default_launch_start_time", "12:30"), "HH:mm"))
-        self.launch_end_edit.setTime(QTime.fromString(settings.get("default_launch_end_time", "13:30"), "HH:mm"))
-        self.late_threshold_edit.setTime(QTime.fromString(settings.get("late_threshold_time", "10:00"), "HH:mm"))
-        self.backup_freq_spinbox.setValue(settings.get("backup_frequency_days", 1))
-        self.backup_retention_spinbox.setValue(settings.get("backup_retention_count", 10))
+        try:
+            self.workday_hours_spinbox.setValue(settings.get("workday_hours", 8))
+            self.launch_start_edit.setTime(QTime.fromString(settings.get("default_launch_start_time", "12:30"), "HH:mm"))
+            self.launch_end_edit.setTime(QTime.fromString(settings.get("default_launch_end_time", "13:30"), "HH:mm"))
+            self.late_threshold_edit.setTime(QTime.fromString(settings.get("late_threshold_time", "10:00"), "HH:mm"))
+            self.backup_freq_spinbox.setValue(settings.get("backup_frequency_days", 1))
+            self.backup_retention_spinbox.setValue(settings.get("backup_retention_count", 10))
+        except Exception:
+            pass
 
         # Update header and button labels now that translator language is set
         if self.title_label:
@@ -401,13 +449,20 @@ class SettingsView(QWidget):
             translator.set_language(lang)
 
             # Recreate tabs so all labels/controls pick up new translations
-            self.recreate_tabs_for_language()
+            self.recreate_tabs_for_language(select_language=lang)
+
+            # HEROIC FIX: Emit signal to update main window and all views
+            self.language_changed.emit(lang)
 
             # Also persist choice to config (but do not trigger the restart flow now)
             config.update_setting("language", lang)
         except Exception as e:
-            # Avoid passing raw exception object into logger format (can cause issues)
-            logger.exception("Failed to change language: %s", str(e))
+            # HEROIC FIX: Don't use logger.exception to avoid recursion in Python 3.13
+            # Just log the error message without stack trace
+            try:
+                logger.error(f"Failed to change language: {e}")
+            except:
+                pass  # If logging fails, silently continue
 
     # Other methods (add_new_user, load_users_list, load_audit_log) remain the same...
     def add_new_user(self):

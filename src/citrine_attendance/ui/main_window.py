@@ -254,7 +254,8 @@ class MainWindow(QMainWindow):
             self.backup_timer.start(max(interval_ms, 60000))  # Minimum 1 minute interval
             self.logger.info(f"Automatic backup scheduled every {frequency_days} day(s).")
         except Exception as e:
-            self.logger.error(f"Failed to setup automatic backup timer: {e}", exc_info=True)
+            # HEROIC FIX: avoid recursion in Python 3.13 logging
+            self.logger.error(f"Failed to setup automatic backup timer: {e}")
 
     def perform_scheduled_backup(self):
         """Performs a scheduled backup via the backup service."""
@@ -264,16 +265,99 @@ class MainWindow(QMainWindow):
             backup_path = backup_service.create_backup(manual=False)
             self.logger.info(f"Scheduled backup created: {backup_path}")
         except (BackupServiceError, Exception) as e:
-            self.logger.error(f"Scheduled backup failed: {e}", exc_info=True)
+            # HEROIC FIX: avoid recursion in Python 3.13 logging
+            self.logger.error(f"Scheduled backup failed: {e}")
 
     def connect_signals(self):
         """Connects signals between different views."""
         try:
             self.employees_view.employee_changed.connect(self.attendance_view.load_filter_data)
             self.employees_view.employee_changed.connect(self.dashboard_view.refresh_data)
+            # HEROIC FIX: Connect language change signal
+            self.settings_view.language_changed.connect(self.on_language_changed)
         except Exception:
             self.logger.debug("Could not connect some signals (views may not implement expected signals).", exc_info=True)
 
+    def on_language_changed(self, language):
+        """HEROIC FIX: Handle language change - update all UI elements."""
+        try:
+            self.logger.info(f"Language changed to: {language}")
+            
+            # Update window title
+            self.setWindowTitle(_("app_title"))
+            
+            # Update layout direction for RTL languages
+            if language == "fa":
+                QApplication.instance().setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+            else:
+                QApplication.instance().setLayoutDirection(Qt.LayoutDirection.LeftToRight)
+            
+            # Update sidebar elements
+            self.update_sidebar_texts()
+            
+            # Update status bar if needed
+            current_index = self.stacked_widget.currentIndex()
+            view_names = [_("view_dashboard"), _("view_employees"), _("view_attendance"),
+                          _("view_reports"), _("view_backups"), _("view_archive"), _("view_settings")]
+            if 0 <= current_index < len(view_names):
+                self.status_bar.showMessage(f"{_('status_view')}: {view_names[current_index]}")
+            
+            # Force refresh all views to update their text
+            self.refresh_all_views()
+            
+        except Exception as e:
+            # HEROIC FIX: avoid recursion in Python 3.13 logging
+            self.logger.error(f"Error handling language change: {e}")
+    
+    def update_sidebar_texts(self):
+        """HEROIC FIX: Update all sidebar button texts."""
+        try:
+            # Update navigation buttons
+            self.btn_dashboard.setText(_("view_dashboard"))
+            self.btn_employees.setText(_("view_employees"))
+            self.btn_attendance.setText(_("view_attendance"))
+            self.btn_reports.setText(_("view_reports"))
+            self.btn_backups.setText(_("view_backups"))
+            self.btn_archive.setText(_("view_archive"))
+            self.btn_settings.setText(_("view_settings"))
+            self.btn_exit.setText(_("exit"))
+            
+            # Update sidebar title (company name doesn't need translation usually)
+            # But we can update it if needed
+            
+        except Exception as e:
+            # HEROIC FIX: avoid recursion in Python 3.13 logging
+            self.logger.error(f"Error updating sidebar texts: {e}")
+    
+    def refresh_all_views(self):
+        """HEROIC FIX: Refresh all views to update their translated texts."""
+        try:
+            # Refresh each view that has data or UI elements
+            if hasattr(self.dashboard_view, 'refresh_data'):
+                self.dashboard_view.refresh_data()
+            
+            if hasattr(self.employees_view, 'load_employees'):
+                self.employees_view.load_employees()
+            
+            if hasattr(self.attendance_view, 'load_filter_data'):
+                self.attendance_view.load_filter_data()
+                if hasattr(self.attendance_view, 'load_attendance_data'):
+                    self.attendance_view.load_attendance_data()
+            
+            if hasattr(self.archive_view, 'refresh_view'):
+                self.archive_view.refresh_view()
+            
+            if hasattr(self.backups_view, 'refresh_view'):
+                self.backups_view.refresh_view()
+            
+            # Force widget update to apply new layout direction
+            self.update()
+            QApplication.processEvents()
+            
+        except Exception as e:
+            # HEROIC FIX: avoid recursion in Python 3.13 logging
+            self.logger.error(f"Error refreshing views: {e}")
+    
     def load_resources(self):
         """Loads application-wide resources like fonts."""
         try:
@@ -281,7 +365,8 @@ class MainWindow(QMainWindow):
             if QFontDatabase.addApplicationFont(font_path) == -1:
                 self.logger.warning("Failed to load Vazir font.")
         except Exception as e:
-            self.logger.error(f"Error loading resources: {e}", exc_info=True)
+            # HEROIC FIX: avoid recursion in Python 3.13 logging
+            self.logger.error(f"Error loading resources: {e}")
 
     def apply_stylesheet(self):
         """Applies a modern light theme stylesheet to the main window and its children."""

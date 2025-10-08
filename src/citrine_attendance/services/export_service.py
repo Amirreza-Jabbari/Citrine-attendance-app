@@ -92,8 +92,8 @@ class ExportService:
                 except (ValueError, TypeError):
                     pass # Keep original string if parsing fails
             
-            # Handle time formatting
-            for key in [_("Time In"), _("Time Out")]:
+            # Handle time formatting - HEROIC IMPLEMENTATION: Include Time In 2 and Time Out 2
+            for key in [_("Time In"), _("Time Out"), _("Time In 2"), _("Time Out 2")]:
                 time_val = processed_row.get(key)
                 if isinstance(time_val, datetime.time):
                     processed_row[key] = time_val.strftime("%H:%M")

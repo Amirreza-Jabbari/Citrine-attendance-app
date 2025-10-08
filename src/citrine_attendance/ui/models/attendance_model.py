@@ -19,17 +19,19 @@ class AttendanceTableModel(QAbstractTableModel):
     DATE_COL = 1
     TIME_IN_COL = 2
     TIME_OUT_COL = 3
-    LEAVE_COL = 4
-    USED_LEAVE_MONTH_COL = 5
-    REMAINING_LEAVE_MONTH_COL = 6
-    TARDINESS_COL = 7
-    EARLY_DEPARTURE_COL = 8 # HEROIC
-    MAIN_WORK_COL = 9
-    OVERTIME_COL = 10
-    LAUNCH_TIME_COL = 11
-    TOTAL_DURATION_COL = 12
-    STATUS_COL = 13
-    NOTE_COL = 14
+    TIME_IN_2_COL = 4 # HEROIC IMPLEMENTATION
+    TIME_OUT_2_COL = 5 # HEROIC IMPLEMENTATION
+    LEAVE_COL = 6
+    USED_LEAVE_MONTH_COL = 7
+    REMAINING_LEAVE_MONTH_COL = 8
+    TARDINESS_COL = 9
+    EARLY_DEPARTURE_COL = 10 # HEROIC
+    MAIN_WORK_COL = 11
+    OVERTIME_COL = 12
+    LAUNCH_TIME_COL = 13
+    TOTAL_DURATION_COL = 14
+    STATUS_COL = 15
+    NOTE_COL = 16
 
     def __init__(self, config):
         super().__init__()
@@ -43,6 +45,7 @@ class AttendanceTableModel(QAbstractTableModel):
         self.COLUMN_HEADERS = [
             _("attendance_header_employee"), _("attendance_header_date"),
             _("attendance_header_time_in"), _("attendance_header_time_out"),
+            _("attendance_header_time_in_2"), _("attendance_header_time_out_2"), # HEROIC IMPLEMENTATION
             _("attendance_header_leave"), _("attendance_header_used_leave"),
             _("attendance_header_remaining_leave"), _("attendance_header_tardiness"),
             _("attendance_header_early_departure"), # HEROIC
@@ -139,6 +142,10 @@ class AttendanceTableModel(QAbstractTableModel):
                 return record.time_in.strftime("%H:%M") if record.time_in else ""
             elif col == self.TIME_OUT_COL:
                 return record.time_out.strftime("%H:%M") if record.time_out else ""
+            elif col == self.TIME_IN_2_COL: # HEROIC IMPLEMENTATION
+                return record.time_in_2.strftime("%H:%M") if record.time_in_2 else ""
+            elif col == self.TIME_OUT_2_COL: # HEROIC IMPLEMENTATION
+                return record.time_out_2.strftime("%H:%M") if record.time_out_2 else ""
             elif col == self.LEAVE_COL:
                 return minutes_to_hhmm(record.leave_duration_minutes)
             elif col == self.USED_LEAVE_MONTH_COL:

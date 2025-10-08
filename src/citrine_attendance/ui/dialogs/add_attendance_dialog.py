@@ -3,7 +3,7 @@ import logging
 from datetime import date, time, datetime
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
-    QPushButton, QMessageBox, QApplication, QDateEdit, QTextEdit
+    QPushButton, QMessageBox, QApplication, QDateEdit, QTextEdit, QCheckBox
 )
 from PyQt6.QtCore import Qt, QDate, QTime, pyqtSignal
 from ...services.employee_service import employee_service
@@ -76,6 +76,27 @@ class AttendanceDialogBase(QDialog):
         self.time_out_edit = CustomTimeEdit()
         form_layout.addRow(_("attendance_add_dialog_time_out"), self.time_out_edit)
 
+        # HEROIC IMPLEMENTATION: Add checkbox to enable second time In/Out
+        self.enable_second_time_checkbox = QCheckBox(_("attendance_add_dialog_enable_second_time"))
+        self.enable_second_time_checkbox.setChecked(False)
+        self.enable_second_time_checkbox.stateChanged.connect(self.toggle_second_time_fields)
+        form_layout.addRow("", self.enable_second_time_checkbox)
+
+        # Second Time In/Out fields (initially hidden)
+        self.time_in_2_edit = CustomTimeEdit()
+        self.time_in_2_label = QLabel(_("attendance_add_dialog_time_in_2"))
+        form_layout.addRow(self.time_in_2_label, self.time_in_2_edit)
+        
+        self.time_out_2_edit = CustomTimeEdit()
+        self.time_out_2_label = QLabel(_("attendance_add_dialog_time_out_2"))
+        form_layout.addRow(self.time_out_2_label, self.time_out_2_edit)
+        
+        # Initially hide second time fields
+        self.time_in_2_label.setVisible(False)
+        self.time_in_2_edit.setVisible(False)
+        self.time_out_2_label.setVisible(False)
+        self.time_out_2_edit.setVisible(False)
+
         self.leave_start_edit = CustomTimeEdit()
         form_layout.addRow(_("hourly_leave_start"), self.leave_start_edit)
 
@@ -128,6 +149,11 @@ class AttendanceDialogBase(QDialog):
         self.date_edit.setDate(QDate.fromString(str(self.record.date), "yyyy-MM-dd"))
         if self.record.time_in: self.time_in_edit.setTime(QTime.fromString(str(self.record.time_in), "HH:mm:ss"))
         if self.record.time_out: self.time_out_edit.setTime(QTime.fromString(str(self.record.time_out), "HH:mm:ss"))
+        # HEROIC IMPLEMENTATION: Load time_in_2 and time_out_2 if present
+        if self.record.time_in_2 or self.record.time_out_2:
+            self.enable_second_time_checkbox.setChecked(True)
+            if self.record.time_in_2: self.time_in_2_edit.setTime(QTime.fromString(str(self.record.time_in_2), "HH:mm:ss"))
+            if self.record.time_out_2: self.time_out_2_edit.setTime(QTime.fromString(str(self.record.time_out_2), "HH:mm:ss"))
         if self.record.leave_start: self.leave_start_edit.setTime(QTime.fromString(str(self.record.leave_start), "HH:mm:ss"))
         if self.record.leave_end: self.leave_end_edit.setTime(QTime.fromString(str(self.record.leave_end), "HH:mm:ss"))
         self.note_edit.setText(self.record.note or "")
@@ -139,6 +165,14 @@ class AttendanceDialogBase(QDialog):
             jalali_date = jdatetime.date.fromgregorian(date=py_date)
             self.jalali_label.setText(jalali_date.strftime("%Y/%m/%d"))
 
+    def toggle_second_time_fields(self, state):
+        """Show or hide the second time In/Out fields based on checkbox state."""
+        is_visible = self.enable_second_time_checkbox.isChecked()
+        self.time_in_2_label.setVisible(is_visible)
+        self.time_in_2_edit.setVisible(is_visible)
+        self.time_out_2_label.setVisible(is_visible)
+        self.time_out_2_edit.setVisible(is_visible)
+
     def get_record_data(self):
         emp_id = self.employee_combo.currentData()
         if emp_id is None:
@@ -149,11 +183,14 @@ class AttendanceDialogBase(QDialog):
             qtime = qtime_edit.time()
             return qtime.toPyTime() if qtime != QTime(0, 0) else None
 
+        # HEROIC IMPLEMENTATION: Include time_in_2 and time_out_2 in record data
         return {
             'employee_id': emp_id,
             'date': self.date_edit.date().toPyDate(),
             'time_in': qtime_to_pytime(self.time_in_edit),
             'time_out': qtime_to_pytime(self.time_out_edit),
+            'time_in_2': qtime_to_pytime(self.time_in_2_edit) if self.enable_second_time_checkbox.isChecked() else None,
+            'time_out_2': qtime_to_pytime(self.time_out_2_edit) if self.enable_second_time_checkbox.isChecked() else None,
             'leave_start': qtime_to_pytime(self.leave_start_edit),
             'leave_end': qtime_to_pytime(self.leave_end_edit),
             'note': self.note_edit.toPlainText().strip() or None,

@@ -312,11 +312,14 @@ class AttendanceView(QWidget):
         try:
             next_day = record.date + timedelta(days=1)
             
+            # HEROIC IMPLEMENTATION: Include time_in_2 and time_out_2 in duplication
             new_record = attendance_service.add_manual_attendance(
                 employee_id=record.employee_id,
                 date=next_day,
                 time_in=record.time_in,
                 time_out=record.time_out,
+                time_in_2=record.time_in_2,
+                time_out_2=record.time_out_2,
                 leave_start=record.leave_start,
                 leave_end=record.leave_end,
                 note=f"Duplicated from {record.date}",

@@ -90,6 +90,8 @@ class AttendanceService:
 
         time_in = _to_time(record.time_in)
         time_out = _to_time(record.time_out)
+        time_in_2 = _to_time(record.time_in_2)
+        time_out_2 = _to_time(record.time_out_2)
         leave_start = _to_time(record.leave_start)
         leave_end = _to_time(record.leave_end)
         
@@ -156,21 +158,51 @@ class AttendanceService:
         dt_out = datetime.datetime.combine(record.date, time_out)
         if dt_out <= dt_in: dt_out += datetime.timedelta(days=1)
 
-        record.duration_minutes = int((dt_out - dt_in).total_seconds() / 60)
+        # Calculate primary duration (time_in to time_out)
+        primary_duration = int((dt_out - dt_in).total_seconds() / 60)
+        
+        # Calculate secondary duration (time_in_2 to time_out_2) if both are present
+        secondary_duration = 0
+        if time_in_2 and time_out_2:
+            dt_in_2 = datetime.datetime.combine(record.date, time_in_2)
+            dt_out_2 = datetime.datetime.combine(record.date, time_out_2)
+            # Handle case where time_out_2 is on the next day
+            if dt_out_2 <= dt_in_2: dt_out_2 += datetime.timedelta(days=1)
+            secondary_duration = int((dt_out_2 - dt_in_2).total_seconds() / 60)
+        
+        # Total duration is the sum of primary and secondary durations
+        record.duration_minutes = primary_duration + secondary_duration
 
         # Recompute launch_duration_minutes as overlap between presence interval and launch interval.
-        record.launch_duration_minutes = _overlap_minutes(dt_in, dt_out, launch_s_dt, launch_e_dt)
+        # This includes both primary (time_in to time_out) and secondary (time_in_2 to time_out_2) periods
+        launch_overlap_primary = _overlap_minutes(dt_in, dt_out, launch_s_dt, launch_e_dt)
+        launch_overlap_secondary = 0
+        if time_in_2 and time_out_2:
+            dt_in_2 = datetime.datetime.combine(record.date, time_in_2)
+            dt_out_2 = datetime.datetime.combine(record.date, time_out_2)
+            if dt_out_2 <= dt_in_2: dt_out_2 += datetime.timedelta(days=1)
+            launch_overlap_secondary = _overlap_minutes(dt_in_2, dt_out_2, launch_s_dt, launch_e_dt)
+        record.launch_duration_minutes = launch_overlap_primary + launch_overlap_secondary
 
         # HEROIC FIX: Implemented new overtime and early departure logic
+        # HEROIC ENHANCEMENT: Consider time_out_2 when determining the actual end time
         try:
             # end_of_work_dt is defined as late_threshold + workday minutes + lunch duration
             end_of_work_dt = late_threshold_dt + datetime.timedelta(minutes=(workday_minutes + total_launch_duration))
 
-            if dt_out > end_of_work_dt:
-                record.overtime_minutes = int((dt_out - end_of_work_dt).total_seconds() / 60)
+            # Determine the actual last time out (considering both time_out and time_out_2)
+            actual_end_dt = dt_out
+            if time_out_2:
+                dt_out_2 = datetime.datetime.combine(record.date, time_out_2)
+                if dt_out_2 <= dt_in: dt_out_2 += datetime.timedelta(days=1)
+                # Use the later of the two time_out values
+                actual_end_dt = max(dt_out, dt_out_2)
+
+            if actual_end_dt > end_of_work_dt:
+                record.overtime_minutes = int((actual_end_dt - end_of_work_dt).total_seconds() / 60)
                 record.early_departure_minutes = 0
-            elif dt_out < end_of_work_dt:
-                record.early_departure_minutes = int((end_of_work_dt - dt_out).total_seconds() / 60)
+            elif actual_end_dt < end_of_work_dt:
+                record.early_departure_minutes = int((end_of_work_dt - actual_end_dt).total_seconds() / 60)
                 record.overtime_minutes = 0
             else:
                 record.overtime_minutes = 0
@@ -369,11 +401,14 @@ class AttendanceService:
                 start_of_period, _end_of_period = get_jalali_month_range(r.date)
                 used_leave = monthly_leave_cache.get((r.employee_id, start_of_period), 0)
                 
+                # HEROIC IMPLEMENTATION: Include time_in_2 and time_out_2 in export
                 export_data.append({
                     _("Employee Name"): f"{r.employee.first_name or ''} {r.employee.last_name or ''}".strip(),
                     _("Date"): r.date.isoformat(), 
                     _("Time In"): r.time_in.strftime("%H:%M") if r.time_in else "",
                     _("Time Out"): r.time_out.strftime("%H:%M") if r.time_out else "",
+                    _("Time In 2"): r.time_in_2.strftime("%H:%M") if r.time_in_2 else "",
+                    _("Time Out 2"): r.time_out_2.strftime("%H:%M") if r.time_out_2 else "",
                     _("Leave (min)"): r.leave_duration_minutes or 0,
                     _("Used Leave This Month (min)"): used_leave,
                     _("Remaining Leave This Month (min)"): max(0, (allowance or 0) - used_leave),

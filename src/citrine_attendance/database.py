@@ -33,6 +33,9 @@ class Attendance(Base):
     date = Column(Date, nullable=False)
     time_in = Column(Time, nullable=True)
     time_out = Column(Time, nullable=True)
+    # --- Second Time In/Out Fields ---
+    time_in_2 = Column(Time, nullable=True)
+    time_out_2 = Column(Time, nullable=True)
 
     # --- Leave Time Fields ---
     leave_start = Column(Time, nullable=True)
@@ -127,7 +130,10 @@ def init_db():
                     "main_work_minutes": "ALTER TABLE attendance ADD COLUMN main_work_minutes INTEGER",
                     "overtime_minutes": "ALTER TABLE attendance ADD COLUMN overtime_minutes INTEGER",
                     # HEROIC FIX: Added migration for early_departure_minutes
-                    "early_departure_minutes": "ALTER TABLE attendance ADD COLUMN early_departure_minutes INTEGER"
+                    "early_departure_minutes": "ALTER TABLE attendance ADD COLUMN early_departure_minutes INTEGER",
+                    # HEROIC IMPLEMENTATION: Added migration for second time in/out
+                    "time_in_2": "ALTER TABLE attendance ADD COLUMN time_in_2 TIME",
+                    "time_out_2": "ALTER TABLE attendance ADD COLUMN time_out_2 TIME"
                 }
                 
                 if 'launch_start' in attendance_columns and 'leave_start' not in attendance_columns:
